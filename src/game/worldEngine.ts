@@ -281,6 +281,8 @@ export class RestaurantWorldEngine {
   /** Installed (active) machines. x/z = where the cook stands; mx/mz = the machine itself. */
   private stations: { type: StationType; x: number; z: number; mx: number; mz: number; ring: THREE.Mesh }[] = [];
   private lastStationsKey = '';
+  /** Called right after every rendered frame (HUD uses it to keep 3D-anchored icons glued on). */
+  private frameListener: (() => void) | null = null;
   // Tall back (-z) and left (-x) walls fade out when the camera swings behind them
   private backWallMats: THREE.MeshStandardMaterial[] = [];
   private leftWallMats: THREE.MeshStandardMaterial[] = [];
@@ -392,6 +394,16 @@ export class RestaurantWorldEngine {
     } else {
       this.slowWindows = 0;
     }
+  }
+
+  /** Registers a callback that runs after every rendered frame (pass null to clear). */
+  public setFrameListener(fn: (() => void) | null) {
+    this.frameListener = fn;
+  }
+
+  /** Projects a world point to screen pixels using the camera of the frame just rendered. */
+  public projectWorld(x: number, y: number, z: number) {
+    return this.projectToScreen(x, y, z);
   }
 
   /** Opens the cooking window for a machine (from its floating sign). */
@@ -2132,6 +2144,7 @@ export class RestaurantWorldEngine {
 
       this.updateSimulation(dt);
       this.renderer.render(this.scene, this.camera);
+      this.frameListener?.();
 
       if (this.isSoftwareGl) {
         this.afterDraw(tick);
@@ -3606,6 +3619,7 @@ export class RestaurantWorldEngine {
               screenY: p.y,
               visible: true,
               kind: order.tableId === -1 ? 'takeaway' : 'order',
+              anchor: { x: c.mesh.root.position.x, y: 2.45, z: c.mesh.root.position.z },
               recipeId: order.recipeId,
               patience: (order.patience / order.maxPatience) * 100,
               label: RECIPES[order.recipeId].name,
@@ -3629,6 +3643,7 @@ export class RestaurantWorldEngine {
             screenY: p.y,
             visible: true,
             kind: 'dirty',
+            anchor: { x: tbl.x, y: 1.65, z: tbl.z },
             label: 'Clean',
             tableId: tbl.id,
           });
@@ -3649,6 +3664,7 @@ export class RestaurantWorldEngine {
           screenY: p.y,
           visible: true,
           kind: 'station',
+          anchor: { x: st.mx, y: 2.15, z: st.mz },
           label: STATION_INFO[st.type].short,
           stationType: st.type,
           recipeIds,

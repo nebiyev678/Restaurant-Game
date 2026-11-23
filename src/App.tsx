@@ -208,6 +208,35 @@ export default function App() {
   const canvasMountRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<RestaurantWorldEngine | null>(null);
 
+  // 3D-anchored HUD icons (order bubbles, machine signs) are positioned every rendered
+  // frame by the engine's frame listener, so they never lag behind a moving camera.
+  const bubbleEls = useRef(new Map<string, HTMLElement>());
+  const bubbleAnchors = useRef(new Map<string, { x: number; y: number; z: number }>());
+  // Stable ref callback per bubble id (an inline ref would detach/reattach every render)
+  const bubbleRefCallbacks = useRef(new Map<string, (el: HTMLElement | null) => void>());
+  const bubbleStartPos = useRef(new Map<string, { x: number; y: number }>());
+  const bindBubble = (id: string, sx: number, sy: number) => {
+    bubbleStartPos.current.set(id, { x: sx, y: sy });
+    let cb = bubbleRefCallbacks.current.get(id);
+    if (!cb) {
+      cb = (el: HTMLElement | null) => {
+        if (el) {
+          const p = bubbleStartPos.current.get(id);
+          if (p && !el.style.transform) {
+            el.style.transform = `translate3d(${p.x}px, ${p.y}px, 0) translate(-50%, -100%)`;
+          }
+          bubbleEls.current.set(id, el);
+        } else {
+          bubbleEls.current.delete(id);
+          bubbleRefCallbacks.current.delete(id);
+          bubbleStartPos.current.delete(id);
+        }
+      };
+      bubbleRefCallbacks.current.set(id, cb);
+    }
+    return cb;
+  };
+
   const commitSave = useCallback((updater: (prev: SaveState) => SaveState) => {
     setSave((prev) => {
       const next = updater(prev);
@@ -379,6 +408,27 @@ export default function App() {
     staffSyncKey,
     save.unlockedRecipes,
   ]);
+
+  useEffect(() => {
+    const m = bubbleAnchors.current;
+    m.clear();
+    for (const b of hud.bubbles) if (b.anchor) m.set(b.id, b.anchor);
+  }, [hud.bubbles]);
+
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.setFrameListener(() => {
+      bubbleEls.current.forEach((el, id) => {
+        const a = bubbleAnchors.current.get(id);
+        if (!a) return;
+        const p = engine.projectWorld(a.x, a.y, a.z);
+        el.style.transform = `translate3d(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px, 0) translate(-50%, -100%)`;
+        el.style.visibility = p.visible ? '' : 'hidden';
+      });
+    });
+    return () => engine.setFrameListener(null);
+  }, []);
 
   // Graphics quality (Settings → Graphics); 'auto' also lets the engine step down if FPS drops
   useEffect(() => {
@@ -1032,7 +1082,8 @@ export default function App() {
                           pending ? `, ${pending} waiting` : ''
                         }`
                   }
-                  style={{ left: `${b.screenX}px`, top: `${b.screenY}px`, transform: 'translate(-50%, -100%)' }}
+                  ref={bindBubble(b.id, b.screenX, b.screenY)}
+                  style={{ left: 0, top: 0, willChange: 'transform' }}
                   className={`pointer-events-auto absolute flex items-center gap-1 rounded-full border shadow-md cursor-pointer ${
                     compact ? 'pl-0.5 pr-1.5 py-0.5' : 'pl-1 pr-2 py-1'
                   } ${
@@ -1079,10 +1130,11 @@ export default function App() {
                     else if (b.orderId) engineRef.current?.openCookForOrder(b.orderId);
                   }}
                   aria-label={b.kind === 'dirty' ? 'Dirty table' : `${b.label} order`}
+                  ref={bindBubble(b.id, b.screenX, b.screenY)}
                   style={{
-                    left: `${b.screenX}px`,
-                    top: `${b.screenY}px`,
-                    transform: 'translate(-50%, -100%)',
+                    left: 0,
+                    top: 0,
+                    willChange: 'transform',
                     background:
                       b.kind === 'dirty'
                         ? '#0f172a'
@@ -1123,11 +1175,8 @@ export default function App() {
                   engineRef.current?.openCookForOrder(b.orderId);
                 }
               }}
-              style={{
-                left: `${b.screenX}px`,
-                top: `${b.screenY}px`,
-                transform: 'translate(-50%, -100%)',
-              }}
+              ref={bindBubble(b.id, b.screenX, b.screenY)}
+              style={{ left: 0, top: 0, willChange: 'transform' }}
               className="pointer-events-auto absolute px-2.5 py-1 rounded-xl bg-slate-950/92 border border-slate-700 shadow-lg text-left cursor-pointer hover:border-amber-400 transition-colors"
             >
               {b.kind === 'dirty' ? (
