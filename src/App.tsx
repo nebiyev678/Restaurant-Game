@@ -34,6 +34,7 @@ import { CookingMiniGame } from './components/CookingMiniGame';
 import { DailyBonusModal } from './components/DailyBonusModal';
 import { DayReportCard } from './components/DayReportCard';
 import { FloatingJoystick } from './components/FloatingJoystick';
+import { PreviewThumb } from './components/ItemPreview';
 import { ManagementDrawers } from './components/ManagementDrawers';
 import { TitleScreen } from './components/TitleScreen';
 import { VirtualJoystick } from './components/VirtualJoystick';
@@ -89,6 +90,18 @@ import { HAPTIC, haptic, isTouchDevice, resolveQuality, setHapticsEnabled } from
 import { useOnlineStatus } from './hooks/usePWAInstall';
 
 const STORAGE_KEY = 'restaurant_empire_save_v1';
+
+/** Short money for the compact phone HUD: 9,850 → $9,850 · 12,400 → $12.4K · 2,300,000 → $2.3M */
+function shortMoney(n: number): string {
+  const abs = Math.abs(n);
+  if (abs < 10000) return `$${Math.round(n).toLocaleString()}`;
+  if (abs < 1_000_000) return `$${(n / 1000).toFixed(abs < 100000 ? 1 : 0)}K`;
+  return `$${(n / 1_000_000).toFixed(1)}M`;
+}
+
+function patienceColor(pct: number): string {
+  return pct > 50 ? '#34d399' : pct > 25 ? '#fbbf24' : '#f43f5e';
+}
 
 const STAFF_FIRST_NAMES = ['Marco', 'Elena', 'Kenji', 'Nora', 'Mateo', 'Clara', 'Sam', 'Zoe'];
 
@@ -158,6 +171,8 @@ export default function App() {
   const isOnline = useOnlineStatus();
   // Phones/tablets get the floating joystick and a decluttered HUD
   const [isTouch] = useState(() => isTouchDevice());
+  // Compact HUD on phones/tablets: smaller text, icons instead of words, nothing covering the play area
+  const compact = isTouch;
 
   const [cookModal, setCookModal] = useState<{
     station: StationType;
@@ -984,12 +999,57 @@ export default function App() {
             <FloatingJoystick
               onMove={(x, y) => engineRef.current?.setJoystick(x, y)}
               onTap={(x, y) => engineRef.current?.tapAt(x, y)}
-              bottomInset={dockCollapsed ? 48 : 104}
+              bottomInset={compact ? (dockCollapsed ? 40 : 84) : dockCollapsed ? 48 : 104}
             />
           )}
 
           {/* Projected 3D Order & Clean Bubbles */}
-          {hud.bubbles.map((b) => (
+          {compact &&
+            hud.bubbles.map((b) => {
+              const pct = Math.max(0, Math.min(100, b.patience ?? 100));
+              return (
+                <button
+                  key={b.id}
+                  onClick={() => {
+                    if (b.kind === 'dirty' && b.tableId) engineRef.current?.teleportToZone('restaurant');
+                    else if (b.orderId) engineRef.current?.openCookForOrder(b.orderId);
+                  }}
+                  aria-label={b.kind === 'dirty' ? 'Dirty table' : `${b.label} order`}
+                  style={{
+                    left: `${b.screenX}px`,
+                    top: `${b.screenY}px`,
+                    transform: 'translate(-50%, -100%)',
+                    background:
+                      b.kind === 'dirty'
+                        ? '#0f172a'
+                        : `conic-gradient(${patienceColor(pct)} ${pct}%, rgba(30,41,59,0.9) 0)`,
+                  }}
+                  className="pointer-events-auto absolute w-9 h-9 rounded-full p-[3px] shadow-lg cursor-pointer"
+                >
+                  {b.kind === 'dirty' ? (
+                    <span className="w-full h-full rounded-full bg-slate-950 border border-amber-400/70 flex items-center justify-center">
+                      <Sparkles className="w-4 h-4 text-amber-300" />
+                    </span>
+                  ) : (
+                    <span className="block w-full h-full rounded-full bg-slate-950 overflow-hidden">
+                      {b.recipeId && (
+                        <PreviewThumb kind="recipe" id={b.recipeId} alt={b.label} className="w-full h-full rounded-full" />
+                      )}
+                    </span>
+                  )}
+                  {(b.archetype === 'vip' || b.archetype === 'critic') && (
+                    <span
+                      className={`absolute -top-1 -right-1 w-4 h-4 rounded-full border border-slate-950 flex items-center justify-center ${
+                        b.archetype === 'vip' ? 'bg-amber-400' : 'bg-rose-500'
+                      }`}
+                    >
+                      <Star className="w-2.5 h-2.5 text-slate-950 fill-slate-950" />
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          {!compact && hud.bubbles.map((b) => (
             <button
               key={b.id}
               onClick={() => {
@@ -1039,7 +1099,7 @@ export default function App() {
             <div
               key={p.id}
               style={{ left: `${p.screenX}px`, top: `${p.screenY}px` }}
-              className={`absolute font-display font-extrabold text-base sm:text-lg drop-shadow-md animate-float-up whitespace-nowrap ${
+              className={`absolute font-display font-extrabold ${compact ? 'text-sm' : 'text-base sm:text-lg'} drop-shadow-md animate-float-up whitespace-nowrap ${
                 p.color === 'emerald'
                   ? 'text-emerald-400'
                   : p.color === 'amber'
@@ -1053,7 +1113,123 @@ export default function App() {
             </div>
           ))}
 
+          {/* Compact phone top stack: status row → order chips → guide tip (never overlapping) */}
+          {compact && (
+            <div
+              className="flex flex-col gap-1.5"
+              style={{
+                paddingTop: 'max(0.5rem, env(safe-area-inset-top))',
+                paddingLeft: 'max(0.5rem, env(safe-area-inset-left))',
+                paddingRight: 'max(0.5rem, env(safe-area-inset-right))',
+              }}
+            >
+              <div className="flex items-center justify-between gap-1.5">
+                <div className="pointer-events-auto flex items-center gap-2.5 min-w-0 rounded-full bg-slate-950/85 border border-slate-700/70 pl-2.5 pr-1 py-1 shadow-md">
+                  <span className="flex items-center gap-1 font-mono-num text-xs font-bold text-white" aria-label="Restaurant cash">
+                    <Coins className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    {shortMoney(save.restaurantCash)}
+                  </span>
+                  <span className="flex items-center gap-1 font-mono-num text-xs font-bold text-white" aria-label="Wallet">
+                    <Wallet className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                    {shortMoney(save.personalWallet)}
+                  </span>
+                  <span className="flex items-center gap-0.5 font-mono-num text-[11px] font-bold text-amber-300" aria-label="Reputation">
+                    <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                    {save.reputation.toFixed(1)}
+                  </span>
+                  <span
+                    aria-label="Cleanliness"
+                    className={`flex items-center gap-0.5 font-mono-num text-[11px] font-bold ${
+                      cleanInfo.tone === 'good' ? 'text-emerald-300' : cleanInfo.tone === 'ok' ? 'text-amber-300' : 'text-rose-400'
+                    }`}
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    {Math.round(save.cleanliness)}%
+                  </span>
+                  <button
+                    onClick={() => {
+                      sound.playClick();
+                      setShowDailyModal(true);
+                    }}
+                    aria-label={`Daily streak ${dailyStatus.effectiveStreak} days`}
+                    className={`flex items-center gap-0.5 h-6 px-1.5 rounded-full font-mono-num text-[11px] font-bold cursor-pointer ${
+                      dailyStatus.canClaim ? 'bg-amber-500 text-slate-950 animate-pulse' : 'text-orange-300'
+                    }`}
+                  >
+                    <Flame className={`w-3 h-3 ${dailyStatus.canClaim ? 'fill-slate-950' : 'fill-orange-400 text-orange-400'}`} />
+                    {dailyStatus.effectiveStreak}
+                  </button>
+                </div>
+                <div className="pointer-events-auto flex items-center gap-1.5 shrink-0">
+                  <span
+                    className="flex items-center gap-1 h-8 px-2 rounded-full bg-slate-950/85 border border-slate-700/70 font-mono-num text-[11px] font-bold text-slate-200"
+                    aria-label={`Day ${save.dayNumber}, ${formatClock(saveRef.current.timeOfDay)}`}
+                  >
+                    <span className="text-[9px] text-indigo-300">D{save.dayNumber}</span>
+                    {formatClock(saveRef.current.timeOfDay)}
+                  </span>
+                  <button
+                    onClick={() => {
+                      haptic(HAPTIC.tap);
+                      setScreen('paused');
+                    }}
+                    className="w-9 h-9 rounded-full bg-slate-950/85 border border-slate-700/70 text-slate-200 flex items-center justify-center cursor-pointer"
+                    aria-label="Pause game"
+                  >
+                    <Pause className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {hud.activeOrders.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  {hud.activeOrders.slice(0, 5).map((ord) => {
+                    const pct = Math.max(0, Math.round((ord.patience / ord.maxPatience) * 100));
+                    return (
+                      <button
+                        key={ord.id}
+                        onClick={() => engineRef.current?.openCookForOrder(ord.id)}
+                        aria-label={`${RECIPES[ord.recipeId].name}, ${ord.tableId === -1 ? 'takeaway' : `table ${ord.tableId}`}, ${pct}% patience`}
+                        className="pointer-events-auto relative w-11 rounded-lg bg-slate-950/85 border border-slate-700/70 p-0.5 cursor-pointer"
+                      >
+                        <PreviewThumb kind="recipe" id={ord.recipeId} alt={RECIPES[ord.recipeId].name} className="w-full h-8 rounded-md" />
+                        <span className="absolute top-0.5 left-0.5 px-1 rounded bg-slate-950/80 text-[8px] font-bold text-slate-200 leading-tight">
+                          {ord.tableId === -1 ? 'TO GO' : `T${ord.tableId}`}
+                        </span>
+                        <span className="block mt-0.5 h-1 rounded-full bg-slate-800 overflow-hidden">
+                          <span className="block h-full" style={{ width: `${Math.max(6, pct)}%`, background: patienceColor(pct) }} />
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {hud.activeOrders.length > 5 && (
+                    <span className="text-[10px] font-bold text-slate-300 bg-slate-950/80 rounded-md px-1.5 py-1">
+                      +{hud.activeOrders.length - 5}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {save.tutorialStep < 4 && drawerTab === 'none' && !cookModal && (
+                <div className="pointer-events-auto self-start max-w-[min(92vw,340px)] flex items-start gap-2 rounded-xl bg-slate-950/85 border border-amber-500/40 pl-2.5 pr-1 py-1.5 shadow-md">
+                  <span className="mt-px shrink-0 rounded bg-amber-500/20 px-1 text-[9px] font-extrabold text-amber-300">
+                    {save.tutorialStep + 1}/4
+                  </span>
+                  <p className="text-[11px] leading-snug text-slate-200">{tutorialMessages[save.tutorialStep]}</p>
+                  <button
+                    onClick={() => commitSave((p) => ({ ...p, tutorialStep: 5 }))}
+                    aria-label="Dismiss guide"
+                    className="shrink-0 w-6 h-6 -my-0.5 rounded-full text-slate-400 hover:text-white flex items-center justify-center cursor-pointer"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Top Perimeter Status Bar */}
+          {!compact && (
           <header
             className="flex items-start justify-between gap-2 p-2.5 sm:px-4 sm:py-3"
             style={{
@@ -1251,9 +1427,10 @@ export default function App() {
               </button>
             </div>
           </header>
+          )}
 
           {/* Compact Top-Left Active Orders Strip */}
-          {hud.activeOrders.length > 0 && (
+          {!compact && hud.activeOrders.length > 0 && (
             <div className="px-3 sm:px-4 flex flex-col gap-1.5 max-w-[230px]">
               {hud.activeOrders.slice(0, 3).map((ord) => {
                 const pct = Math.max(0, Math.round((ord.patience / ord.maxPatience) * 100));
@@ -1293,14 +1470,19 @@ export default function App() {
 
           {/* Celebratory Level-Up / Milestone Toast */}
           {toast && (
-            <div className="fixed top-18 left-1/2 -translate-x-1/2 z-30 px-4 py-2.5 rounded-xl bg-amber-500 text-slate-950 shadow-2xl border border-amber-300 text-center">
-              <p className="font-display font-extrabold text-sm leading-tight">{toast.title}</p>
-              <p className="text-xs font-semibold text-slate-900">{toast.subtitle}</p>
+            <div
+              className={`fixed left-1/2 -translate-x-1/2 z-30 rounded-xl bg-amber-500 text-slate-950 shadow-2xl border border-amber-300 text-center ${
+                compact ? 'px-3 py-1.5 max-w-[86vw]' : 'top-18 px-4 py-2.5'
+              }`}
+              style={compact ? { top: 'calc(max(0.5rem, env(safe-area-inset-top)) + 2.75rem)' } : undefined}
+            >
+              <p className={`font-display font-extrabold leading-tight ${compact ? 'text-xs' : 'text-sm'}`}>{toast.title}</p>
+              <p className={`font-semibold text-slate-900 ${compact ? 'text-[10px] truncate' : 'text-xs'}`}>{toast.subtitle}</p>
             </div>
           )}
 
           {/* Gentle Onboarding Tutorial Tip */}
-          {save.tutorialStep < 4 && drawerTab === 'none' && !cookModal && !dayReport && (
+          {!compact && save.tutorialStep < 4 && drawerTab === 'none' && !cookModal && !dayReport && (
             <div className="fixed top-20 right-3 sm:right-5 max-w-[260px] pointer-events-auto rounded-xl bg-slate-950/92 border border-amber-500/50 p-3 shadow-xl">
               <div className="flex items-center justify-between gap-2 mb-1">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400">
@@ -1327,7 +1509,7 @@ export default function App() {
               marginLeft: 'env(safe-area-inset-left)',
             }}
           >
-            {hud.heldRecipe && (
+            {!compact && hud.heldRecipe && (
               <div className="pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-500 text-slate-950 shadow-lg font-bold text-xs">
                 <Utensils className="w-4 h-4" />
                 <span>Carrying: {RECIPES[hud.heldRecipe].name}</span>
@@ -1337,7 +1519,64 @@ export default function App() {
           </div>
 
           {/* Bottom-Right Context Action Button (Mobile & Desktop) */}
-          {hud.nearbyPrompt && (
+          {compact && (hud.nearbyPrompt || hud.heldRecipe) && (
+            <div
+              className="fixed right-2 flex flex-col items-end gap-1.5"
+              style={{
+                bottom: `calc(${dockCollapsed ? '3.25rem' : '6rem'} + env(safe-area-inset-bottom))`,
+                marginRight: 'env(safe-area-inset-right)',
+              }}
+            >
+              {hud.heldRecipe && (
+                <div className="flex items-center gap-1.5 rounded-full bg-slate-950/85 border border-amber-500/60 pl-0.5 pr-2.5 py-0.5 shadow-md">
+                  <PreviewThumb kind="recipe" id={hud.heldRecipe} alt={RECIPES[hud.heldRecipe].name} className="w-7 h-7 rounded-full" />
+                  <span className="text-[10px] font-bold text-amber-200 max-w-[38vw] truncate">
+                    Carrying {RECIPES[hud.heldRecipe].name}
+                  </span>
+                </div>
+              )}
+              {hud.nearbyPrompt && (
+                <button
+                  onClick={() => {
+                    haptic(HAPTIC.action);
+                    engineRef.current?.triggerContextAction();
+                  }}
+                  className="pointer-events-auto flex items-center gap-2 h-12 pl-1.5 pr-3.5 rounded-full bg-amber-500 active:bg-amber-400 active:scale-95 text-slate-950 shadow-xl border-2 border-amber-200 cursor-pointer transition-transform animate-action-pop max-w-[62vw]"
+                >
+                  {(() => {
+                    const t = hud.nearbyPrompt.actionType;
+                    const Icon =
+                      t === 'cook_station' ? ChefHat
+                      : t === 'serve_table' || t === 'serve_takeaway' ? Utensils
+                      : t === 'clean_table' ? Sparkles
+                      : t === 'enter_car' || t === 'exit_car' ? Car
+                      : t === 'open_bank' ? Wallet
+                      : t === 'open_supermarket' ? Store
+                      : t === 'open_home' ? Home
+                      : t === 'open_shop' ? ShoppingBag
+                      : Flame;
+                    return (
+                      <span className="w-9 h-9 rounded-full bg-slate-950/15 flex items-center justify-center shrink-0">
+                        <Icon className="w-5 h-5" />
+                      </span>
+                    );
+                  })()}
+                  <span className="min-w-0 text-left">
+                    <span className="block font-display font-extrabold text-[13px] leading-tight truncate">
+                      {hud.nearbyPrompt.label}
+                    </span>
+                    {hud.nearbyPrompt.sublabel && (
+                      <span className="block text-[10px] font-semibold text-slate-900/80 leading-tight truncate">
+                        {hud.nearbyPrompt.sublabel}
+                      </span>
+                    )}
+                  </span>
+                </button>
+              )}
+            </div>
+          )}
+
+          {!compact && hud.nearbyPrompt && (
             <div
               className="fixed right-3 sm:right-5"
               style={{
@@ -1395,11 +1634,14 @@ export default function App() {
           {/* Bottom-Center Collapsible Management Dock */}
           <div
             className="fixed left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 max-w-[96vw]"
-            style={{ bottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
+            style={{ bottom: `calc(${compact ? '0.375rem' : '0.75rem'} + env(safe-area-inset-bottom))` }}
           >
             <button
               onClick={() => setDockCollapsed((c) => !c)}
-              className="pointer-events-auto inline-flex items-center gap-1 px-3 py-1 rounded-full bg-slate-950/92 border border-slate-700 text-[11px] font-semibold text-slate-300 hover:text-white cursor-pointer"
+              aria-label={dockCollapsed ? 'Show menu' : 'Hide menu'}
+              className={`pointer-events-auto inline-flex items-center gap-1 rounded-full bg-slate-950/92 border border-slate-700 font-semibold text-slate-300 hover:text-white cursor-pointer ${
+                compact ? 'h-5 px-2.5 text-[10px]' : 'px-3 py-1 text-[11px]'
+              }`}
             >
               {dockCollapsed ? (
                 <>
@@ -1413,7 +1655,11 @@ export default function App() {
             </button>
 
             {!dockCollapsed && (
-              <nav className="pointer-events-auto flex items-center gap-1 p-1.5 rounded-2xl bg-slate-950/95 border border-slate-700/90 shadow-2xl overflow-x-auto max-w-[96vw]">
+              <nav
+                className={`pointer-events-auto flex items-center rounded-2xl bg-slate-950/95 border border-slate-700/90 shadow-2xl overflow-x-auto max-w-[96vw] ${
+                  compact ? 'gap-0.5 p-1' : 'gap-1 p-1.5'
+                }`}
+              >
                 {[
                   { id: 'restaurant', label: 'Restaurant', icon: Store },
                   { id: 'kitchen', label: 'Kitchen', icon: ChefHat },
@@ -1433,14 +1679,15 @@ export default function App() {
                         setDrawerSubTab(undefined);
                         setDrawerTab(active ? 'none' : (item.id as DrawerTab));
                       }}
-                      className={`flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
-                        active
-                          ? 'bg-amber-500 text-slate-950'
-                          : 'text-slate-200 hover:bg-slate-800'
-                      }`}
+                      aria-label={item.label}
+                      className={`shrink-0 cursor-pointer transition-colors font-bold whitespace-nowrap ${
+                        compact
+                          ? 'flex flex-col items-center justify-center gap-0.5 w-[46px] h-11 rounded-xl text-[9px]'
+                          : 'flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs'
+                      } ${active ? 'bg-amber-500 text-slate-950' : 'text-slate-200 hover:bg-slate-800'}`}
                     >
-                      <Icon className="w-4 h-4 shrink-0" />
-                      <span>{item.label}</span>
+                      <Icon className={`${compact ? 'w-[18px] h-[18px]' : 'w-4 h-4'} shrink-0`} />
+                      <span>{compact && item.id === 'restaurant' ? 'Cafe' : compact && item.id === 'lifestyle' ? 'Shop' : compact && item.id === 'settings' ? 'Setup' : item.label}</span>
                     </button>
                   );
                 })}
@@ -1524,7 +1771,7 @@ export default function App() {
 
       {/* End-of-Day Report (non-blocking) */}
       {dayReport && screen === 'playing' && (
-        <DayReportCard report={dayReport} onClose={closeDayReport} />
+        <DayReportCard report={dayReport} onClose={closeDayReport} compact={compact} />
       )}
 
       {/* Offline Franchise Earnings */}
