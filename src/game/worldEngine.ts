@@ -279,8 +279,6 @@ export class RestaurantWorldEngine {
   /** Installed (active) machines. x/z = where the cook stands; mx/mz = the machine itself. */
   private stations: { type: StationType; x: number; z: number; mx: number; mz: number; ring: THREE.Mesh }[] = [];
   private lastStationsKey = '';
-  /** Covered (not yet unlocked) machines, for their floating "unlocks at" signs. */
-  private lockedStations: { type: StationType; mx: number; mz: number; recipeIds: RecipeId[]; level: number }[] = [];
   private stationPulseTime = 0;
   private registerPos = new THREE.Vector3(-5.5, 0, -4.4);
   private customers: SimCustomer[] = [];
@@ -1040,7 +1038,6 @@ export class RestaurantWorldEngine {
 
     const activeStations = new Set(getActiveStations(this.saveRef.current.unlockedRecipes));
     const unlockedSet = new Set(this.saveRef.current.unlockedRecipes);
-    this.lockedStations = [];
     stationLayout.forEach((st) => {
       const isActive = activeStations.has(st.type);
       let mesh: THREE.Group;
@@ -1054,13 +1051,6 @@ export class RestaurantWorldEngine {
         const first = upcoming[0];
         const level = first?.requiredLevel ?? 1;
         mesh = createCoveredMachineMesh(st.type, first?.name ?? STATION_INFO[st.type].short, level);
-        this.lockedStations.push({
-          type: st.type,
-          mx: st.x,
-          mz: st.z,
-          recipeIds: upcoming.slice(0, 3).map((r) => r.id),
-          level,
-        });
       }
       mesh.position.set(st.x, 0.1, st.z);
       mesh.rotation.y = st.type === 'bar' ? 0 : Math.PI / 2;
@@ -3600,22 +3590,6 @@ export class RestaurantWorldEngine {
           recipeIds,
           pendingCount: this.orders.filter((o) => o.status === 'waiting' && RECIPES[o.recipeId].station === st.type)
             .length,
-        });
-      }
-      for (const ls of this.lockedStations) {
-        const p = this.projectToScreen(ls.mx, 2.0, ls.mz);
-        if (!p.visible) continue;
-        bubbles.push({
-          id: `locked_${ls.type}`,
-          screenX: p.x,
-          screenY: p.y,
-          visible: true,
-          kind: 'station',
-          label: `Lv ${ls.level}`,
-          stationType: ls.type,
-          recipeIds: ls.recipeIds,
-          locked: true,
-          unlockLevel: ls.level,
         });
       }
     }
