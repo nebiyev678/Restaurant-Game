@@ -1144,7 +1144,7 @@ export default function App() {
                 <button
                   key={b.id}
                   onClick={() => {
-                    if (b.kind === 'dirty' && b.tableId) engineRef.current?.teleportToZone('restaurant');
+                    if (b.kind === 'dirty' && b.tableId) engineRef.current?.walkToTable(b.tableId);
                     else if (b.orderId) engineRef.current?.openCookForOrder(b.orderId);
                   }}
                   aria-label={b.kind === 'dirty' ? 'Dirty table' : `${b.label} order`}
@@ -1188,7 +1188,7 @@ export default function App() {
               key={b.id}
               onClick={() => {
                 if (b.kind === 'dirty' && b.tableId) {
-                  engineRef.current?.teleportToZone('restaurant');
+                  engineRef.current?.walkToTable(b.tableId);
                 } else if (b.orderId) {
                   engineRef.current?.openCookForOrder(b.orderId);
                 }
