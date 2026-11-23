@@ -279,6 +279,11 @@ export class RestaurantWorldEngine {
   /** Installed (active) machines. x/z = where the cook stands; mx/mz = the machine itself. */
   private stations: { type: StationType; x: number; z: number; mx: number; mz: number; ring: THREE.Mesh }[] = [];
   private lastStationsKey = '';
+  // Tall back (-z) and left (-x) walls fade out when the camera swings behind them
+  private backWallMats: THREE.MeshStandardMaterial[] = [];
+  private leftWallMats: THREE.MeshStandardMaterial[] = [];
+  private backWallFade = 1;
+  private leftWallFade = 1;
   private stationPulseTime = 0;
   private registerPos = new THREE.Vector3(-5.5, 0, -4.4);
   private customers: SimCustomer[] = [];
@@ -354,6 +359,8 @@ export class RestaurantWorldEngine {
     this.renderer.shadowMap.enabled = shadows;
     this.renderer.shadowMap.type = preset.softShadows ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
     this.sunLight.castShadow = shadows;
+    // Coarser shadow maps need a little more offset to avoid blotchy "shadow acne" on walls
+    this.sunLight.shadow.normalBias = preset.shadowMapSize >= 2048 ? 0.02 : preset.shadowMapSize >= 1024 ? 0.035 : 0.05;
     if (this.sunLight.shadow.mapSize.x !== preset.shadowMapSize) {
       this.sunLight.shadow.mapSize.set(preset.shadowMapSize, preset.shadowMapSize);
       this.sunLight.shadow.map?.dispose();
@@ -803,19 +810,37 @@ export class RestaurantWorldEngine {
       roughness: 0.32,
     });
 
-    const backWall = new THREE.Mesh(new THREE.BoxGeometry(w, 2.95, 0.28), wallMat);
+    // Each tall wall gets its own materials so it can fade independently
+    const backSet = {
+      wall: wallMat,
+      trim: woodTrimMat,
+      base: darkBaseMat,
+      subway: subwayMat,
+    };
+    const leftSet = {
+      wall: wallMat.clone(),
+      trim: woodTrimMat.clone(),
+      base: darkBaseMat.clone(),
+      subway: subwayMat.clone(),
+    };
+    this.backWallMats = Object.values(backSet);
+    this.leftWallMats = Object.values(leftSet);
+    this.backWallFade = 1;
+    this.leftWallFade = 1;
+
+    const backWall = new THREE.Mesh(new THREE.BoxGeometry(w, 2.95, 0.28), backSet.wall);
     backWall.position.set(centerX, 1.48, minZ + 0.14);
     backWall.castShadow = true;
     backWall.receiveShadow = true;
     this.restaurantGroup.add(backWall);
 
     // Top Caramel-Wood Cap & Baseboard Trim on Back Wall
-    const backCap = new THREE.Mesh(new THREE.BoxGeometry(w + 0.12, 0.14, 0.38), woodTrimMat);
+    const backCap = new THREE.Mesh(new THREE.BoxGeometry(w + 0.12, 0.14, 0.38), backSet.trim);
     backCap.position.set(centerX, 2.98, minZ + 0.14);
-    const backBase = new THREE.Mesh(new THREE.BoxGeometry(w - 0.1, 0.24, 0.06), darkBaseMat);
+    const backBase = new THREE.Mesh(new THREE.BoxGeometry(w - 0.1, 0.24, 0.06), backSet.base);
     backBase.position.set(centerX, 0.2, minZ + 0.3);
     // White subway-tile kitchen backsplash cleanly bounded between corner and divider pilasters
-    const backBacksplash = new THREE.Mesh(new THREE.BoxGeometry(5.1, 1.55, 0.04), subwayMat);
+    const backBacksplash = new THREE.Mesh(new THREE.BoxGeometry(5.1, 1.55, 0.04), backSet.subway);
     backBacksplash.position.set(minX + 2.9, 1.48, minZ + 0.3);
     backBacksplash.receiveShadow = true;
     this.restaurantGroup.add(backCap, backBase, backBacksplash);
@@ -828,33 +853,36 @@ export class RestaurantWorldEngine {
       maxZ: minZ + 0.34,
     });
 
-    const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.28, 2.95, d), wallMat);
+    const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.28, 2.95, d), leftSet.wall);
     leftWall.position.set(minX + 0.14, 1.48, 0);
     leftWall.castShadow = true;
     leftWall.receiveShadow = true;
     this.restaurantGroup.add(leftWall);
 
-    const leftCap = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.14, d + 0.12), woodTrimMat);
+    const leftCap = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.14, d + 0.12), leftSet.trim);
     leftCap.position.set(minX + 0.14, 2.98, 0);
-    const leftBase = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.24, d - 0.1), darkBaseMat);
+    const leftBase = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.24, d - 0.1), leftSet.base);
     leftBase.position.set(minX + 0.3, 0.2, 0);
     const leftTileStartZ = minZ + 0.36;
     const leftTileEndZ = 1.2;
     const leftTileSpan = Math.max(2, leftTileEndZ - leftTileStartZ);
-    const leftBacksplash = new THREE.Mesh(new THREE.BoxGeometry(0.04, 1.55, leftTileSpan), subwayMat);
+    const leftBacksplash = new THREE.Mesh(new THREE.BoxGeometry(0.04, 1.55, leftTileSpan), leftSet.subway);
     leftBacksplash.position.set(minX + 0.3, 1.48, (leftTileStartZ + leftTileEndZ) / 2);
     leftBacksplash.receiveShadow = true;
     this.restaurantGroup.add(leftCap, leftBase, leftBacksplash);
 
     // Architectural Caramel-Wood Corner & Section Pilasters along Back & Left Walls
-    for (const [px, pz] of [
-      [minX + 0.16, minZ + 0.16],
-      [maxX - 0.16, minZ + 0.16],
-      [minX + 0.16, maxZ - 0.16],
-      [minX + 5.65, minZ + 0.18],
-      [minX + 0.18, 1.4],
+    for (const [px, pz, onBack] of [
+      [minX + 0.16, minZ + 0.16, 1],
+      [maxX - 0.16, minZ + 0.16, 1],
+      [minX + 0.16, maxZ - 0.16, 0],
+      [minX + 5.65, minZ + 0.18, 1],
+      [minX + 0.18, 1.4, 0],
     ]) {
-      const pilaster = new THREE.Mesh(new THREE.BoxGeometry(0.36, 3.04, 0.36), woodTrimMat);
+      const pilaster = new THREE.Mesh(
+        new THREE.BoxGeometry(0.36, 3.04, 0.36),
+        onBack ? backSet.trim : leftSet.trim
+      );
       pilaster.position.set(px, 1.52, pz);
       pilaster.castShadow = true;
       this.restaurantGroup.add(pilaster);
@@ -2238,6 +2266,32 @@ export class RestaurantWorldEngine {
     }
   }
 
+  /**
+   * When the camera swings behind the restaurant, the tall wall between it and the
+   * dining room fades to see-through instead of filling the screen.
+   */
+  private updateWallFade(dt: number) {
+    const b = this.restaurantBounds;
+    const cam = this.camera.position;
+    const backTarget = cam.z < b.minZ + 0.6 ? 0.14 : 1;
+    const leftTarget = cam.x < b.minX + 0.6 ? 0.14 : 1;
+    this.backWallFade = THREE.MathUtils.damp(this.backWallFade, backTarget, 9, dt);
+    this.leftWallFade = THREE.MathUtils.damp(this.leftWallFade, leftTarget, 9, dt);
+    const apply = (mats: THREE.MeshStandardMaterial[], fade: number) => {
+      const see = fade < 0.98;
+      for (const m of mats) {
+        if (m.transparent !== see) {
+          m.transparent = see;
+          m.needsUpdate = true;
+        }
+        m.opacity = see ? fade : 1;
+        m.depthWrite = fade > 0.6;
+      }
+    };
+    apply(this.backWallMats, this.backWallFade);
+    apply(this.leftWallMats, this.leftWallFade);
+  }
+
   private updateCameraTransform(dt: number, dist: number, pitch: number) {
     const horiz = Math.cos(pitch) * dist;
     const vert = Math.sin(pitch) * dist;
@@ -2249,6 +2303,7 @@ export class RestaurantWorldEngine {
     this.camera.position.y = THREE.MathUtils.damp(this.camera.position.y, desiredY, 10, dt);
     this.camera.position.z = THREE.MathUtils.damp(this.camera.position.z, desiredZ, 10, dt);
     this.camera.lookAt(this.camTarget);
+    this.updateWallFade(dt);
   }
 
   private updatePlayerMovement(dt: number) {
