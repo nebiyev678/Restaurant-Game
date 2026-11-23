@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowDownToLine,
   Award,
+  BookOpen,
   Building2,
   ChefHat,
   ChevronDown,
@@ -37,6 +38,20 @@ import {
 import { CookingMiniGame } from './components/CookingMiniGame';
 import { DailyBonusModal } from './components/DailyBonusModal';
 import { QuickGoalChip } from './components/QuickGoalChip';
+import { GrandOpeningModal } from './components/GrandOpeningModal';
+import { RecipeAlbum, NewCardsToast } from './components/RecipeAlbum';
+import {
+  addAlbumCards,
+  createEmptyAlbum,
+  CUISINES,
+  getAlbumPage,
+  getAlbumPageReward,
+  getMenuRecipes,
+  getNextCuisine,
+  getPassiveRestaurantIncomePerMin,
+  isAlbumPageComplete,
+  rollAlbumCards,
+} from './game/cuisines';
 import { DayReportCard } from './components/DayReportCard';
 import { FloatingJoystick } from './components/FloatingJoystick';
 import { PreviewThumb } from './components/ItemPreview';
@@ -96,8 +111,11 @@ import {
   getTotalDailyPayroll,
   getXpForNextLevel,
   type ChallengeEvent,
+  getEffectiveTheme,
 } from './game/data';
 import {
+  AlbumCardDef,
+  CuisineId,
   CafeThemeId,
   CustomerOrder,
   DayReport,
@@ -178,22 +196,36 @@ function loadSavedState(): { state: SaveState; hasExisting: boolean } {
           const unlocked = Array.isArray(parsed.unlockedRecipes) && parsed.unlockedRecipes.length > 0
             ? parsed.unlockedRecipes
             : base.unlockedRecipes;
+          const activeCuisine =
+            parsed.activeCuisine && CUISINES[parsed.activeCuisine] ? parsed.activeCuisine : base.activeCuisine;
+          const menu = getMenuRecipes({ activeCuisine, unlockedRecipes: unlocked });
           const special =
-            parsed.dailySpecial && unlocked.includes(parsed.dailySpecial)
+            parsed.dailySpecial && menu.includes(parsed.dailySpecial)
               ? parsed.dailySpecial
-              : pickDailySpecial(parsed.dayNumber ?? 1, unlocked, null);
+              : pickDailySpecial(parsed.dayNumber ?? 1, menu, null);
           const qg = parsed.quickGoals;
           const quickGoals =
             qg && typeof qg.completed === 'number' && qg.current
               ? qg
               : {
                   completed: 0,
-                  current: generateQuickGoal(0, parsed.restaurantLevel ?? 1, unlocked, special),
+                  current: generateQuickGoal(0, parsed.restaurantLevel ?? 1, menu, special),
                 };
           return {
             dailySpecial: special,
             quickGoals,
             starStreak: typeof parsed.starStreak === 'number' ? parsed.starStreak : 0,
+            activeCuisine,
+            ownedRestaurants: Array.isArray(parsed.ownedRestaurants)
+              ? parsed.ownedRestaurants.filter((c) => CUISINES[c])
+              : base.ownedRestaurants,
+            album: parsed.album && parsed.album.cards
+              ? {
+                  cards: { ...parsed.album.cards },
+                  claimedPages: Array.isArray(parsed.album.claimedPages) ? parsed.album.claimedPages : [],
+                  unseen: Array.isArray(parsed.album.unseen) ? parsed.album.unseen : [],
+                }
+              : createEmptyAlbum(),
           };
         })(),
         staff: Array.isArray(parsed.staff)
@@ -255,6 +287,8 @@ export default function App() {
 
   // Latest-handler refs so the once-mounted engine always calls current logic
   const dayEndedRef = useRef<() => void>(() => {});
+  const albumDropRef = useRef<(items: RecipeId[]) => void>(() => {});
+  const albumGrantRef = useRef<(cards: AlbumCardDef[]) => void>(() => {});
   const staffTaskDoneRef = useRef<(staffId: string) => void>(() => {});
 
   const canvasMountRef = useRef<HTMLDivElement>(null);
@@ -337,11 +371,8 @@ export default function App() {
   }, [save.isMusicMuted]);
 
   useEffect(() => {
-    const activeTheme =
-      CAFE_THEMES.find((t) => t.id === (save.activeCafeThemeId ?? 'classic_bistro')) ??
-      CAFE_THEMES[0];
-    sound.setMusicTheme(activeTheme.musicMood);
-  }, [save.activeCafeThemeId]);
+    sound.setMusicTheme(getEffectiveTheme(save).musicMood);
+  }, [save.activeCafeThemeId, save.activeCuisine]);
 
   // Mount Three.js engine once in isolated container
   useEffect(() => {
@@ -352,6 +383,7 @@ export default function App() {
       onHudUpdate: (snapshot) => setHud(snapshot),
       onOrderServed: (recipeId, revenue, tip, repDelta, xpGain, _pos, info) => {
         const total = revenue + tip;
+        albumDropRef.current(info.items);
         haptic(HAPTIC.success);
         pushPopup(
           `${info.comboSize > 1 ? `Combo ×${info.comboSize}! ` : ''}+$${revenue}${tip > 0 ? ` (+$${tip} tip)` : ''}`,
@@ -522,6 +554,7 @@ export default function App() {
     save.ownedFurniture,
     staffSyncKey,
     save.unlockedRecipes,
+    save.activeCuisine,
   ]);
 
   useEffect(() => {
@@ -573,7 +606,7 @@ export default function App() {
     const starStreak = stars >= 2 ? (s.starStreak ?? 0) + 1 : 0;
     const starStreakBonusPct = stars >= 2 ? getStarStreakBonusPct(starStreak) : 0;
     const starReward = Math.round(getStarReward(stars, s.restaurantLevel) * (1 + starStreakBonusPct / 100));
-    const nextSpecial = pickDailySpecial(s.dayNumber + 1, s.unlockedRecipes, s.dailySpecial);
+    const nextSpecial = pickDailySpecial(s.dayNumber + 1, getMenuRecipes(s), s.dailySpecial);
     const report: DayReport = {
       dayNumber: s.dayNumber,
       stats: { ...t },
@@ -592,7 +625,7 @@ export default function App() {
         special: nextSpecial,
         goal: s.quickGoals.current,
         goalsToChest: goalsUntilChest(s.quickGoals.completed),
-        mastery: findNearestMastery(s.recipeMastery ?? {}, s.unlockedRecipes),
+        mastery: findNearestMastery(s.recipeMastery ?? {}, getMenuRecipes(s)),
       },
     };
 
@@ -614,6 +647,9 @@ export default function App() {
     });
     sound.playBell();
     setDayReport(report);
+    if (stars >= 3) {
+      window.setTimeout(() => albumGrantRef.current(rollAlbumCards(1, s.activeCuisine, s.ownedRestaurants)), 1500);
+    }
   }, [commitSave]);
   dayEndedRef.current = handleDayEnded;
 
@@ -690,7 +726,7 @@ export default function App() {
       if (saveRef.current.dailyChallenges?.date === today) return;
       commitSave((prev) => ({
         ...prev,
-        dailyChallenges: generateDailyChallenges(today, prev.restaurantLevel, prev.unlockedRecipes),
+        dailyChallenges: generateDailyChallenges(today, prev.restaurantLevel, getMenuRecipes(prev)),
       }));
     };
     check();
@@ -730,8 +766,81 @@ export default function App() {
       totalEarned: prev.totalEarned + reward,
       dailyChallenges: { ...prev.dailyChallenges, bonusClaimed: true },
     }));
-    showToast('Daily Chest Opened!', `+$${reward.toLocaleString()} for finishing all 3 challenges`);
+    showToast('Daily Chest Opened!', `+$${reward.toLocaleString()} and 3 album cards`);
+    const cs = saveRef.current;
+    window.setTimeout(() => albumGrantRef.current(rollAlbumCards(3, cs.activeCuisine, cs.ownedRestaurants, Math.random, { minRarity: 'rare' })), 1000);
   }, [commitSave, showToast]);
+
+  // --- Recipe Album: cards drop from orders, chests and 3-star days ---
+  const [showAlbum, setShowAlbum] = useState(false);
+  const [newCards, setNewCards] = useState<AlbumCardDef[]>([]);
+  const grantAlbumCards = useCallback(
+    (cards: AlbumCardDef[]) => {
+      if (cards.length === 0) return;
+      const lv = saveRef.current.restaurantLevel;
+      const result = addAlbumCards(saveRef.current.album, cards, lv);
+      commitSave((prev) => {
+        const r = addAlbumCards(prev.album, cards, prev.restaurantLevel);
+        return {
+          ...prev,
+          album: r.album,
+          restaurantCash: prev.restaurantCash + r.duplicateCash,
+          totalEarned: prev.totalEarned + r.duplicateCash,
+        };
+      });
+      if (result.newCards.length > 0) {
+        haptic(HAPTIC.success);
+        sound.playUnlock();
+        setNewCards((q) => [...q, ...result.newCards]);
+      } else if (result.duplicateCash > 0) {
+        pushPopup(`Duplicate card +$${result.duplicateCash}`, 'sky');
+      }
+    },
+    [commitSave, pushPopup]
+  );
+  albumGrantRef.current = grantAlbumCards;
+  albumDropRef.current = (items: RecipeId[]) => {
+    const s = saveRef.current;
+    const chance = 0.1 + (items.length - 1) * 0.05;
+    if (Math.random() >= chance) return;
+    grantAlbumCards(rollAlbumCards(1, s.activeCuisine, s.ownedRestaurants, Math.random, { preferRecipe: items[0] }));
+  };
+  useEffect(() => {
+    if (newCards.length === 0) return;
+    const t = window.setTimeout(() => setNewCards((q) => q.slice(1)), 2600);
+    return () => window.clearTimeout(t);
+  }, [newCards]);
+
+  const handleClaimAlbumPage = useCallback(
+    (cuisine: CuisineId) => {
+      const s = saveRef.current;
+      if (s.album.claimedPages.includes(cuisine) || !isAlbumPageComplete(s.album, cuisine)) return;
+      const reward = getAlbumPageReward(s.restaurantLevel);
+      sound.playLevelUp();
+      haptic(HAPTIC.levelUp);
+      commitSave((prev) => ({
+        ...prev,
+        restaurantCash: prev.restaurantCash + reward,
+        totalEarned: prev.totalEarned + reward,
+        album: { ...prev.album, claimedPages: [...prev.album.claimedPages, cuisine] },
+      }));
+      showToast(`${CUISINES[cuisine].flag} Album page complete!`, `+$${reward.toLocaleString()} and +3% on every dish forever`);
+    },
+    [commitSave, showToast]
+  );
+  const openAlbum = useCallback(() => {
+    sound.playClick();
+    setShowAlbum(true);
+  }, []);
+  const closeAlbum = useCallback(() => {
+    setShowAlbum(false);
+    commitSave((prev) => (prev.album.unseen.length ? { ...prev, album: { ...prev.album, unseen: [] } } : prev));
+  }, [commitSave]);
+  const albumBadge =
+    save.album.unseen.length +
+    (Object.keys(CUISINES) as CuisineId[]).filter(
+      (c) => !save.album.claimedPages.includes(c) && isAlbumPageComplete(save.album, c)
+    ).length;
 
   // --- Quick goal chain: a finished goal pays out after a short beat, then the next one appears ---
   const [goalFlash, setGoalFlash] = useState<{ reward: number; chest: number } | null>(null);
@@ -752,11 +861,13 @@ export default function App() {
         totalEarned: prev.totalEarned + reward + chest,
         quickGoals: {
           completed,
-          current: generateQuickGoal(completed, prev.restaurantLevel, prev.unlockedRecipes, prev.dailySpecial, prev.quickGoals.current?.kind),
+          current: generateQuickGoal(completed, prev.restaurantLevel, getMenuRecipes(prev), prev.dailySpecial, prev.quickGoals.current?.kind),
         },
       }));
       setGoalFlash({ reward, chest });
       if (chest > 0) {
+        const cs = saveRef.current;
+        window.setTimeout(() => grantAlbumCards(rollAlbumCards(2, cs.activeCuisine, cs.ownedRestaurants)), 900);
         sound.playLevelUp();
         haptic(HAPTIC.levelUp);
         showToast('🎁 Goal Chest!', `+$${(reward + chest).toLocaleString()} for ${QUICK_GOAL_CHEST_EVERY} goals in a row`);
@@ -767,12 +878,58 @@ export default function App() {
       }
     }, 900);
     return () => window.clearTimeout(timer);
-  }, [quickGoalDone, quickGoalId, commitSave, pushPopup, showToast]);
+  }, [quickGoalDone, quickGoalId, commitSave, pushPopup, showToast, grantAlbumCards]);
   useEffect(() => {
     if (!goalFlash) return;
     const t = window.setTimeout(() => setGoalFlash(null), 1600);
     return () => window.clearTimeout(t);
   }, [goalFlash]);
+
+  // --- Moving to the next country's restaurant ---
+  const nextCuisine = getNextCuisine(save.activeCuisine);
+  const canOpenNext = !!nextCuisine && save.restaurantLevel >= nextCuisine.requiredLevel;
+  const [showGrandOpening, setShowGrandOpening] = useState(false);
+  const handleOpenNextRestaurant = useCallback(() => {
+    const s = saveRef.current;
+    const next = getNextCuisine(s.activeCuisine);
+    if (!next || s.restaurantLevel < next.requiredLevel) return;
+    const previous = CUISINES[s.activeCuisine];
+    const unlocked = Array.from(new Set([...s.unlockedRecipes, ...next.starters]));
+    const menu = getMenuRecipes({ activeCuisine: next.id, unlockedRecipes: unlocked });
+    const special = pickDailySpecial(s.dayNumber, menu, null);
+    commitSave((prev) => ({
+      ...prev,
+      activeCuisine: next.id,
+      ownedRestaurants: prev.ownedRestaurants.includes(prev.activeCuisine)
+        ? prev.ownedRestaurants
+        : [...prev.ownedRestaurants, prev.activeCuisine],
+      unlockedRecipes: Array.from(new Set([...prev.unlockedRecipes, ...next.starters])),
+      // The new place shows its own country style (paid styles can be re-applied in the Restaurant menu)
+      activeCafeThemeId: 'classic_bistro',
+      dailySpecial: special,
+      quickGoals: {
+        ...prev.quickGoals,
+        current: generateQuickGoal(prev.quickGoals.completed, prev.restaurantLevel, menu, special),
+      },
+      // Today's "serve X" challenges switch to a dish the new kitchen actually makes
+      dailyChallenges: {
+        ...prev.dailyChallenges,
+        items: prev.dailyChallenges.items.map((c, i) =>
+          c.kind === 'serve_recipe' && c.recipeId && !menu.includes(c.recipeId) && c.progress < c.target
+            ? { ...c, recipeId: menu[i % menu.length], progress: 0 }
+            : c
+        ),
+      },
+    }));
+    engineRef.current?.startNewRestaurant();
+    setShowGrandOpening(false);
+    setDrawerTab('none');
+    sound.playLevelUp();
+    haptic(HAPTIC.levelUp);
+    showToast(`${next.flag} ${next.name} is open!`, `${previous.name} keeps earning money for you in town`);
+    // Opening gift: three album cards from the new country
+    window.setTimeout(() => grantAlbumCards(rollAlbumCards(3, next.id, [], Math.random, { minRarity: 'rare' })), 1200);
+  }, [commitSave, showToast, grantAlbumCards]);
 
   const claimableChallenges = countClaimableChallenges(save.dailyChallenges);
   const starTarget = getDailyStarTarget(save.restaurantLevel);
@@ -818,8 +975,12 @@ export default function App() {
       if (screen !== 'playing' || document.hidden) return;
 
       // Franchise passive income tick (10s = 1/6th minute)
-      if (s.ownedFranchises.length > 0) {
-        const tickIncome = Math.round(getFranchiseIncomePerMinute(s.ownedFranchises) / 6);
+      if (s.ownedFranchises.length > 0 || s.ownedRestaurants.length > 0) {
+        const tickIncome = Math.round(
+          (getFranchiseIncomePerMinute(s.ownedFranchises) +
+            getPassiveRestaurantIncomePerMin(s.ownedRestaurants, s.restaurantLevel)) /
+            6
+        );
         if (tickIncome > 0) {
           commitSave((prev) => ({
             ...prev,
@@ -858,6 +1019,8 @@ export default function App() {
       if (!hiddenAt) return;
       const reward = computeOfflineEarnings({
         ownedFranchises: saveRef.current.ownedFranchises,
+        ownedRestaurants: saveRef.current.ownedRestaurants,
+        restaurantLevel: saveRef.current.restaurantLevel,
         lastSeenAt: hiddenAt,
       });
       if (reward) setOfflineReward((curr) => curr ?? reward);
@@ -1920,6 +2083,20 @@ export default function App() {
                   {RECIPES[save.dailySpecial].name} +{Math.round(DAILY_SPECIAL_BONUS * 100)}%
                 </span>
               )}
+              {canOpenNext && nextCuisine && (
+                <button
+                  onClick={() => {
+                    sound.playClick();
+                    setShowGrandOpening(true);
+                  }}
+                  className={`pointer-events-auto flex items-center gap-1 rounded-full bg-indigo-600 border border-indigo-200 text-white font-extrabold shadow-lg animate-pulse cursor-pointer ${
+                    compact ? 'px-2 py-1 text-[10px]' : 'px-3 py-1.5 text-xs'
+                  }`}
+                  aria-label={`Open ${nextCuisine.name}`}
+                >
+                  <span aria-hidden>{nextCuisine.flag}</span> New restaurant!
+                </button>
+              )}
             </div>
           )}
 
@@ -2166,6 +2343,7 @@ export default function App() {
                   { id: 'city', label: 'City', icon: Building2 },
                   { id: 'lifestyle', label: 'Lifestyle', icon: ShoppingBag },
                   { id: 'missions', label: 'Missions', icon: Award },
+                  { id: 'album', label: 'Album', icon: BookOpen },
                   { id: 'settings', label: 'Settings', icon: Settings },
                 ].map((item) => {
                   const Icon = item.icon;
@@ -2174,6 +2352,11 @@ export default function App() {
                     <button
                       key={item.id}
                       onClick={() => {
+                        if (item.id === 'album') {
+                          setDrawerTab('none');
+                          openAlbum();
+                          return;
+                        }
                         sound.playClick();
                         setDrawerSubTab(undefined);
                         setDrawerTab(active ? 'none' : (item.id as DrawerTab));
@@ -2181,7 +2364,7 @@ export default function App() {
                       aria-label={item.label}
                       className={`shrink-0 cursor-pointer transition-colors font-bold whitespace-nowrap ${
                         compact
-                          ? 'flex flex-col items-center justify-center gap-0.5 w-[46px] h-11 rounded-xl text-[9px]'
+                          ? 'flex flex-col items-center justify-center gap-0.5 w-[43px] h-11 rounded-xl text-[9px]'
                           : 'flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs'
                       } ${active ? 'bg-amber-500 text-slate-950' : 'text-slate-200 hover:bg-slate-800'}`}
                     >
@@ -2190,6 +2373,11 @@ export default function App() {
                         {item.id === 'missions' && claimableChallenges > 0 && (
                           <span className="absolute -top-1.5 -right-2 min-w-4 h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-extrabold flex items-center justify-center">
                             {claimableChallenges}
+                          </span>
+                        )}
+                        {item.id === 'album' && albumBadge > 0 && (
+                          <span className="absolute -top-1.5 -right-2 min-w-4 h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-extrabold flex items-center justify-center">
+                            {albumBadge}
                           </span>
                         )}
                       </span>
@@ -2207,7 +2395,7 @@ export default function App() {
       {cookModal && (
         <CookingMiniGame
           station={cookModal.station}
-          unlockedRecipes={save.unlockedRecipes}
+          unlockedRecipes={getMenuRecipes(save)}
           unlockedSpecialtyLines={save.unlockedSpecialtyLines}
           equipmentLevel={save.equipmentLevels[cookModal.station] ?? 1}
           bulkDiscount={save.bulkIngredientsDiscount}
@@ -2227,6 +2415,10 @@ export default function App() {
 
       {/* Management & Lifestyle Drawers */}
       <ManagementDrawers
+        onOpenGrandOpening={() => {
+          sound.playClick();
+          setShowGrandOpening(true);
+        }}
         activeTab={drawerTab}
         initialSubTab={drawerSubTab}
         save={save}
@@ -2279,6 +2471,29 @@ export default function App() {
       />
 
       {/* End-of-Day Report (non-blocking) */}
+      {showGrandOpening && nextCuisine && (
+        <GrandOpeningModal
+          next={nextCuisine}
+          current={CUISINES[save.activeCuisine]}
+          restaurantLevel={save.restaurantLevel}
+          onOpen={handleOpenNextRestaurant}
+          onClose={() => setShowGrandOpening(false)}
+        />
+      )}
+
+      {showAlbum && (
+        <RecipeAlbum
+          album={save.album}
+          activeCuisine={save.activeCuisine}
+          ownedRestaurants={save.ownedRestaurants}
+          restaurantLevel={save.restaurantLevel}
+          onClaimPage={handleClaimAlbumPage}
+          onClose={closeAlbum}
+        />
+      )}
+
+      {newCards.length > 0 && screen === 'playing' && <NewCardsToast card={newCards[0]} compact={compact} />}
+
       {dayReport && screen === 'playing' && (
         <DayReportCard report={dayReport} onClose={closeDayReport} compact={compact} />
       )}

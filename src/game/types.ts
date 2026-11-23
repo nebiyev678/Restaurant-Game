@@ -19,7 +19,7 @@ export type CafeThemeId =
   | 'modern_loft'
   | 'royal_salon';
 
-export type CafeMusicMood = 'bistro' | 'waltz' | 'tea' | 'lofi' | 'royal';
+export type CafeMusicMood = 'bistro' | 'waltz' | 'tea' | 'lofi' | 'royal' | 'italian' | 'japanese' | 'mexican' | 'azeri';
 
 export interface CafeThemeDef {
   id: CafeThemeId;
@@ -74,7 +74,91 @@ export type RecipeId =
   | 'berry_tart'
   | 'matcha_boba'
   | 'mango_smoothie'
-  | 'berry_mocktail';
+  | 'berry_mocktail'
+  // Trattoria Roma (Italy)
+  | 'bruschetta'
+  | 'risotto'
+  | 'lasagna'
+  // Sakura Ramen House (Japan)
+  | 'ramen'
+  | 'gyoza'
+  | 'tempura'
+  | 'mochi'
+  // Casa Fiesta (Mexico)
+  | 'tacos'
+  | 'nachos'
+  | 'burrito'
+  | 'churros'
+  // Caravanserai Baku (Azerbaijan)
+  | 'lula_kebab'
+  | 'qutab'
+  | 'plov'
+  | 'dolma'
+  | 'pakhlava'
+  | 'azeri_tea';
+
+/** Each restaurant in the chain serves one country's food. */
+export type CuisineId = 'bistro' | 'italian' | 'japanese' | 'mexican' | 'azerbaijani';
+
+export interface CuisineDef {
+  id: CuisineId;
+  /** Restaurant name shown on the sign. */
+  name: string;
+  country: string;
+  flag: string;
+  /** Restaurant level needed to open it. */
+  requiredLevel: number;
+  tagline: string;
+  description: string;
+  /** Every dish this restaurant can serve. */
+  menu: RecipeId[];
+  /** Dishes unlocked for free on opening day. */
+  starters: RecipeId[];
+  /** Interior palette (used unless the player picked a paid cafe style). */
+  palette: {
+    wall: string;
+    wainscot: string;
+    trim: string;
+    floorPrimary: string;
+    floorSecondary: string;
+    floorMode: 'checker' | 'wood';
+    kitchenPrimary: string;
+    kitchenSecondary: string;
+    cushion: string;
+    woodPrimary: string;
+    woodSecondary: string;
+    light: string;
+    accent: string;
+    /** Awning / umbrella stripes. */
+    awningA: string;
+    awningB: string;
+  };
+  musicMood: CafeMusicMood;
+  /** Money per real minute this restaurant earns once you have moved on (scaled by level). */
+  passivePerMin: number;
+}
+
+export type AlbumRarity = 'common' | 'rare' | 'gold';
+
+export interface AlbumCardDef {
+  id: string;
+  cuisine: CuisineId;
+  name: string;
+  rarity: AlbumRarity;
+  /** Dish cards show the dish model; culture cards show an emoji illustration. */
+  recipeId?: RecipeId;
+  emoji?: string;
+  blurb: string;
+}
+
+export interface AlbumState {
+  /** Copies owned per card id. */
+  cards: Record<string, number>;
+  /** Pages whose completion reward was collected. */
+  claimedPages: CuisineId[];
+  /** Cards collected since the album was last opened (for the badge). */
+  unseen: string[];
+}
 
 export interface RecipeDef {
   id: RecipeId;
@@ -267,7 +351,7 @@ export interface AchievementDef {
 }
 
 export interface CityZone {
-  id: 'restaurant' | 'clothing' | 'dealership' | 'home' | 'bank' | 'supermarket';
+  id: 'restaurant' | 'clothing' | 'dealership' | 'home' | 'bank' | 'supermarket' | 'foodstreet' | 'townsquare' | 'park';
   name: string;
   subtitle: string;
   x: number;
@@ -378,6 +462,12 @@ export interface SaveState {
   dailySpecial: RecipeId | null;
   /** Consecutive in-game days closed with 2+ stars. */
   starStreak: number;
+  /** The restaurant the player runs now. */
+  activeCuisine: CuisineId;
+  /** Earlier restaurants in the chain, still earning money in town. */
+  ownedRestaurants: CuisineId[];
+  /** Recipe album collection. */
+  album: AlbumState;
 }
 
 /** A short goal that takes a minute or two; finishing it immediately reveals the next one. */

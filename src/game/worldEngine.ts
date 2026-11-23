@@ -3,8 +3,12 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { sound } from './audio';
 import { QUALITY_PRESETS, ResolvedQuality } from './mobile';
 import { ParkingTraffic } from './parking';
+import { CUISINES, getAlbumPriceMult, getMenuRecipes, getNextCuisine } from './cuisines';
+import { createCuisineDecor } from './cuisineDecor';
+import { buildFoodStreetPlots, foodStreetColliders } from './foodStreet';
 import {
   CAFE_THEMES,
+  getEffectiveTheme,
   CITY_ZONES,
   CLOTHING_CATALOG,
   HOUSE_CATALOG,
@@ -84,6 +88,7 @@ import {
 import {
   CAR_TRAVEL_SPOTS,
   OLD_TOWN,
+  TOWN_BOUNDS,
   OldTownExterior,
   createGableRoofMesh,
   createStreetTerrace,
@@ -336,6 +341,9 @@ export class RestaurantWorldEngine {
   private hudSyncTimer = 0;
   private lastTier = -1;
   private lastCafeThemeId = '';
+  private cuisineGlowMats: THREE.MeshStandardMaterial[] = [];
+  private foodStreetGroup = new THREE.Group();
+  private lastChainKey = '';
   private lastHouseId = '';
   private lastFurnitureKey = '';
   private lastVehicleId: string | null = null;
@@ -728,7 +736,8 @@ export class RestaurantWorldEngine {
       createDriver: (archetype, seed) => createCharacterModel(getCustomerAppearance(archetype, seed)),
       onDriverArrived: (mesh, archetype, seed, carId) => this.spawnCustomer({ mesh, archetype, seed, carId }),
     });
-    this.staticColliders.push(...town.colliders);
+    this.staticColliders.push(...town.colliders, ...foodStreetColliders());
+    this.scene.add(this.foodStreetGroup);
     this.streetLampBulbs.push(...town.lanternMats);
 
     // City Buildings
@@ -814,7 +823,7 @@ export class RestaurantWorldEngine {
 
     // 1. Rebuild Restaurant Structure & Tables if tier or cafe theme changed
     const activeThemeId = save.activeCafeThemeId ?? 'classic_bistro';
-    const stationsKey = getActiveStations(save.unlockedRecipes).join(',');
+    const stationsKey = `${save.activeCuisine ?? 'bistro'}|${getActiveStations(getMenuRecipes(save)).join(',')}`;
     if (
       force ||
       this.lastTier !== tierInfo.tier ||
@@ -825,6 +834,15 @@ export class RestaurantWorldEngine {
       this.lastCafeThemeId = activeThemeId;
       this.lastStationsKey = stationsKey;
       this.rebuildRestaurant(tierInfo.tier, tierInfo.tableCount);
+    }
+
+    // 1b. Food Street: earlier restaurants reopen on the north avenue
+    const chainKey = `${(save.ownedRestaurants ?? []).join(',')}|${save.activeCuisine ?? 'bistro'}`;
+    if (force || this.lastChainKey !== chainKey) {
+      this.lastChainKey = chainKey;
+      this.scene.remove(this.foodStreetGroup);
+      this.foodStreetGroup = buildFoodStreetPlots(save.ownedRestaurants ?? [], getNextCuisine(save.activeCuisine ?? 'bistro'));
+      this.scene.add(this.foodStreetGroup);
     }
 
     // 2. Update Player Clothes
@@ -909,9 +927,7 @@ export class RestaurantWorldEngine {
       maxZ: d / 2,
     };
 
-    const activeTheme =
-      CAFE_THEMES.find((t) => t.id === (this.saveRef.current.activeCafeThemeId ?? 'classic_bistro')) ??
-      CAFE_THEMES[0];
+    const activeTheme = getEffectiveTheme(this.saveRef.current);
 
     const minX = centerX - w / 2;
     const maxX = centerX + w / 2;
@@ -1158,6 +1174,10 @@ export class RestaurantWorldEngine {
     const entranceArch = createEntranceArchwayMesh(activeTheme.trimColor, activeTheme.wainscotColor);
     entranceArch.position.set(maxX - 0.1, 0.1, 0);
     this.restaurantGroup.add(entranceArch);
+    // Country dressing: name sign, pennant bunting and lanterns / flower baskets / carpets
+    const decor = createCuisineDecor(this.saveRef.current.activeCuisine ?? 'bistro', maxX - 0.1);
+    this.restaurantGroup.add(decor.group);
+    this.cuisineGlowMats = decor.glowMats;
     this.restaurantColliders.push(
       { kind: 'circle', x: maxX - 0.1, z: -1.95, r: 0.25 },
       { kind: 'circle', x: maxX - 0.1, z: 1.95, r: 0.25 },
@@ -1280,8 +1300,10 @@ export class RestaurantWorldEngine {
       { type: 'bar', x: centerX - 1.6, z: minZ + 1.02 },
     ];
 
-    const activeStations = new Set(getActiveStations(this.saveRef.current.unlockedRecipes));
-    const unlockedSet = new Set(this.saveRef.current.unlockedRecipes);
+    const menuNow = getMenuRecipes(this.saveRef.current);
+    const activeStations = new Set(getActiveStations(menuNow));
+    const unlockedSet = new Set(menuNow);
+    const cuisineMenu = CUISINES[this.saveRef.current.activeCuisine ?? 'bistro'].menu;
     stationLayout.forEach((st) => {
       const isActive = activeStations.has(st.type);
       let mesh: THREE.Group;
@@ -1289,7 +1311,7 @@ export class RestaurantWorldEngine {
         mesh = createKitchenStationMesh(st.type);
       } else {
         // Machines not unlocked yet arrive covered and strapped, tagged with what they'll cook
-        const upcoming = RECIPE_LIST.filter((r) => r.station === st.type && !unlockedSet.has(r.id)).sort(
+        const upcoming = RECIPE_LIST.filter((r) => r.station === st.type && cuisineMenu.includes(r.id) && !unlockedSet.has(r.id)).sort(
           (a, b) => a.requiredLevel - b.requiredLevel
         );
         const first = upcoming[0];
@@ -2007,6 +2029,32 @@ export class RestaurantWorldEngine {
     });
   }
 
+  /**
+   * Opening a new restaurant: guests, orders and dishes from the old menu are cleared,
+   * and the chef steps out onto the piazza to admire the new sign.
+   */
+  public startNewRestaurant() {
+    for (const c of this.customers) this.scene.remove(c.mesh.root);
+    this.customers = [];
+    this.orders = [];
+    for (const t of this.tables) {
+      t.occupiedBy = null;
+      t.dirty = false;
+    }
+    this.readyDishes = [];
+    this.cookJobs.clear();
+    this.clearHeldDish();
+    this.parking?.clear();
+    this.streakCount = 0;
+    this.streakTimer = 0;
+    if (!this.inVehicle) {
+      this.playerPos.set(8.2, 0, 0);
+      this.playerParts.root.position.copy(this.playerPos);
+      this.camAzimuth = Math.PI / 2;
+    }
+    this.syncDynamicWorld(true);
+  }
+
   public clearHeldDish() {
     if (this.heldDishMesh) {
       this.playerParts.carryAnchor.remove(this.heldDishMesh);
@@ -2316,7 +2364,7 @@ export class RestaurantWorldEngine {
       const specialFactor = r === save.dailySpecial ? 1 + DAILY_SPECIAL_BONUS : 1;
       return sum + def.sellPrice * specialtyFactor * specialFactor * getMasteryPriceMult(save.recipeMastery?.[r] ?? 0);
     }, 0);
-    const baseSale = Math.round(itemsValue * qualityBonus * getComboBonusMult(order.items.length));
+    const baseSale = Math.round(itemsValue * qualityBonus * getComboBonusMult(order.items.length) * getAlbumPriceMult(save.album));
 
     // Serving streak: completed in a row (resets on a walk-out or after STREAK_WINDOW idle seconds)
     this.streakCount += 1;
@@ -2571,6 +2619,9 @@ export class RestaurantWorldEngine {
     for (const mat of this.streetLampBulbs) {
       mat.emissiveIntensity = lampGlow;
     }
+    for (const mat of this.cuisineGlowMats) {
+      mat.emissiveIntensity = 0.25 + lampGlow * 0.9;
+    }
   }
 
   /**
@@ -2675,7 +2726,9 @@ export class RestaurantWorldEngine {
         VEHICLE_CATALOG.find((v) => v.id === this.saveRef.current.activeVehicleId) ??
         VEHICLE_CATALOG[0];
       const speed = carDef.speed;
-      const minCarX = Math.max(this.restaurantBounds.maxX + 1.55, 4.5);
+      // Cars stay out of the restaurant and piazza; farther north (Food Street) and south (parking, park) the town opens up
+      const nearRestaurantZ = this.carPos.z > -20 && this.carPos.z < 12;
+      const minCarX = nearRestaurantZ ? Math.max(this.restaurantBounds.maxX + 1.55, 4.5) : TOWN_BOUNDS.minX;
       if (moving) {
         const prevX = this.carPos.x;
         const prevZ = this.carPos.z;
@@ -2683,11 +2736,11 @@ export class RestaurantWorldEngine {
         const subSteps = Math.max(1, Math.ceil(stepDist / 0.25));
         const subStep = stepDist / subSteps;
         for (let s = 0; s < subSteps; s++) {
-          this.carPos.x = THREE.MathUtils.clamp(this.carPos.x + _v1.x * subStep, minCarX, 45);
-          this.carPos.z = THREE.MathUtils.clamp(this.carPos.z + _v1.z * subStep, -16, 16);
+          this.carPos.x = THREE.MathUtils.clamp(this.carPos.x + _v1.x * subStep, minCarX, TOWN_BOUNDS.maxX);
+          this.carPos.z = THREE.MathUtils.clamp(this.carPos.z + _v1.z * subStep, TOWN_BOUNDS.minZ, TOWN_BOUNDS.maxZ);
           this.resolveWorldCollision(this.carPos, 1.05, false, false);
-          this.carPos.x = THREE.MathUtils.clamp(this.carPos.x, minCarX, 45);
-          this.carPos.z = THREE.MathUtils.clamp(this.carPos.z, -16, 16);
+          this.carPos.x = THREE.MathUtils.clamp(this.carPos.x, minCarX, TOWN_BOUNDS.maxX);
+          this.carPos.z = THREE.MathUtils.clamp(this.carPos.z, TOWN_BOUNDS.minZ, TOWN_BOUNDS.maxZ);
         }
         this.carVel.set(
           (this.carPos.x - prevX) / Math.max(dt, 1e-4),
@@ -2731,11 +2784,11 @@ export class RestaurantWorldEngine {
         const subSteps = Math.max(1, Math.ceil(stepDist / 0.1));
         const subStep = stepDist / subSteps;
         for (let s = 0; s < subSteps; s++) {
-          this.playerPos.x = THREE.MathUtils.clamp(this.playerPos.x + _v1.x * subStep, -16, 45.5);
-          this.playerPos.z = THREE.MathUtils.clamp(this.playerPos.z + _v1.z * subStep, -16, 16);
+          this.playerPos.x = THREE.MathUtils.clamp(this.playerPos.x + _v1.x * subStep, TOWN_BOUNDS.minX, TOWN_BOUNDS.maxX);
+          this.playerPos.z = THREE.MathUtils.clamp(this.playerPos.z + _v1.z * subStep, TOWN_BOUNDS.minZ, TOWN_BOUNDS.maxZ);
           this.resolveWorldCollision(this.playerPos, 0.32, true, s === subSteps - 1);
-          this.playerPos.x = THREE.MathUtils.clamp(this.playerPos.x, -16, 45.5);
-          this.playerPos.z = THREE.MathUtils.clamp(this.playerPos.z, -16, 16);
+          this.playerPos.x = THREE.MathUtils.clamp(this.playerPos.x, TOWN_BOUNDS.minX, TOWN_BOUNDS.maxX);
+          this.playerPos.z = THREE.MathUtils.clamp(this.playerPos.z, TOWN_BOUNDS.minZ, TOWN_BOUNDS.maxZ);
         }
         this.playerVel.set(
           (this.playerPos.x - prevX) / Math.max(dt, 1e-4),
@@ -3449,7 +3502,7 @@ export class RestaurantWorldEngine {
 
   private createCustomerOrder(c: SimCustomer) {
     const save = this.saveRef.current;
-    const unlocked = save.unlockedRecipes.length > 0 ? save.unlockedRecipes : (['burger'] as RecipeId[]);
+    const unlocked = getMenuRecipes(save);
     // Combos (2–3 dishes) from level 3, preferring different dishes
     const size = rollComboSize(save.restaurantLevel, unlocked.length);
     const pool = unlocked.slice();
@@ -3659,8 +3712,8 @@ export class RestaurantWorldEngine {
       if (this.deliveryTimer <= 0) {
         this.deliveryTimer = Math.max(7, 15 - drivers[0].level * 1.2);
         const avgPrice =
-          save.unlockedRecipes.reduce((acc, id) => acc + RECIPES[id].sellPrice, 0) /
-          save.unlockedRecipes.length;
+          getMenuRecipes(save).reduce((acc, id) => acc + RECIPES[id].sellPrice, 0) /
+          getMenuRecipes(save).length;
         const payout = Math.round(avgPrice * (1.15 + drivers.length * 0.35));
         this.callbacks.onDeliveryIncome(payout);
         this.spawnBurst(5.5, 1.4, 0, '#eab308', 6);
@@ -4063,7 +4116,7 @@ export class RestaurantWorldEngine {
 
     // Floating machine signs: which dishes each machine makes (shown while in the restaurant)
     if (this.isInsideRestaurant(this.playerPos.x, this.playerPos.z) && !this.inVehicle) {
-      const unlocked = this.saveRef.current.unlockedRecipes;
+      const unlocked = getMenuRecipes(this.saveRef.current);
       for (const st of this.stations) {
         const p = this.projectToScreen(st.mx, 2.15, st.mz);
         if (!p.visible) continue;
