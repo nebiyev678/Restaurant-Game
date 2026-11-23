@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { WorldCollider } from './npcPhysics';
+import { PARKING } from './parking';
 
 // ---------------------------------------------------------------------------
 // Layout (world units = metres). Kept in one place so gameplay code can share it.
@@ -350,6 +351,7 @@ export class OldTownExterior {
     this.buildTrees(colliders);
     this.buildBenches(colliders);
     this.buildPlantersAndBollards(colliders);
+    this.buildParkingProps(colliders);
     this.buildSkyline();
     return { colliders, lanternMats };
   }
@@ -437,6 +439,29 @@ export class OldTownExterior {
       )
     );
 
+    // Back street (customer cars) + restaurant parking lot
+    const st = PARKING.street;
+    const stLen = st.maxX - st.minX;
+    const stDepth = st.maxZ - st.minZ;
+    g.add(flatPlane(stLen, stDepth, roadMat(stLen, stDepth), (st.minX + st.maxX) / 2, 0.021, (st.minZ + st.maxZ) / 2));
+    const lotMinX = PARKING.bays[0] - PARKING.bayWidth / 2 - 0.3;
+    const lotMaxX = PARKING.bays[PARKING.bays.length - 1] + PARKING.bayWidth / 2 + 0.3;
+    const lotDepth = PARKING.bayBackZ - PARKING.bayFrontZ + 0.2;
+    g.add(
+      flatPlane(
+        lotMaxX - lotMinX,
+        lotDepth,
+        new THREE.MeshStandardMaterial({
+          map: textured(setts, (lotMaxX - lotMinX) / 2, lotDepth / 2),
+          color: '#d6d0c6',
+          roughness: 0.88,
+        }),
+        (lotMinX + lotMaxX) / 2,
+        0.019,
+        (PARKING.bayFrontZ + PARKING.bayBackZ) / 2
+      )
+    );
+
     // Markings: crosswalks at the three road mouths and parallel parking bays
     const paint = new THREE.MeshStandardMaterial({ color: '#f1ede4', roughness: 0.7 });
     const stripeGeo = new THREE.PlaneGeometry(1, 1);
@@ -456,6 +481,17 @@ export class OldTownExterior {
     stripes.push(compose(27.3, 0.032, bayZ1, 0, 7.8, 1, 0.08).clone());
     for (const x of [23.4, 26.0, 28.6, 31.2]) {
       stripes.push(compose(x, 0.032, (bayZ0 + bayZ1) / 2, 0, 0.08, 1, bayZ1 - bayZ0).clone());
+    }
+    // Restaurant lot: white bay lines + a dashed centre line on the back street
+    const bayLen = PARKING.bayBackZ - PARKING.bayFrontZ;
+    const bayMidZ = (PARKING.bayFrontZ + PARKING.bayBackZ) / 2;
+    PARKING.bays.forEach((bx, i) => {
+      if (i === 0) stripes.push(compose(bx - PARKING.bayWidth / 2, 0.033, bayMidZ, 0, 0.1, 1, bayLen).clone());
+      stripes.push(compose(bx + PARKING.bayWidth / 2, 0.033, bayMidZ, 0, 0.1, 1, bayLen).clone());
+    });
+    for (let x = PARKING.street.minX + 1; x < PARKING.street.maxX - 1; x += 3) {
+      if (x > 14.2 && x < 20.8) continue; // junction with the N/S avenue
+      stripes.push(compose(x, 0.033, (PARKING.street.westLaneZ + PARKING.street.eastLaneZ) / 2, 0, 1.4, 1, 0.1).clone());
     }
     const marks = new THREE.InstancedMesh(stripeGeo, paint, stripes.length);
     stripes.forEach((m, i) => marks.setMatrixAt(i, m));
@@ -520,6 +556,14 @@ export class OldTownExterior {
     addArc(rb.x, rb.z, r, (3 * Math.PI) / 2 + nsGap, 2 * Math.PI - eastGap);
     // Island rim
     addArc(rb.x, rb.z, rb.islandR, 0, Math.PI * 2);
+
+    // Back street kerbs (open where the lot and the N/S avenue join it)
+    const stz = PARKING.street;
+    addLine(stz.minX, stz.maxZ + 0.11, stz.maxX, stz.maxZ + 0.11);
+    const lotEnd = PARKING.bays[PARKING.bays.length - 1] + PARKING.bayWidth / 2 + 0.3;
+    addLine(lotEnd, stz.minZ - 0.11, nsRoad.x - nsRoad.halfW - 0.11, stz.minZ - 0.11);
+    addLine(nsRoad.x + nsRoad.halfW + 0.11, stz.minZ - 0.11, stz.maxX, stz.minZ - 0.11);
+    addLine(stz.minX - 0.11, stz.minZ, stz.minX - 0.11, stz.maxZ);
 
     const geo = new THREE.BoxGeometry(1, H, 0.22);
     const curbs = new THREE.InstancedMesh(
@@ -707,9 +751,8 @@ export class OldTownExterior {
       [21.4, -9.0],
       [-17, 13.5],
       [-17, -13.5],
-      [-8, 12.5],
+      [-9.6, 15.2],
       [-8, -12.5],
-      [0, 12.5],
       [0, -12.5],
     ];
     const rnd = seeded(3);
@@ -860,6 +903,50 @@ export class OldTownExterior {
     });
     bollards.castShadow = true;
     this.group.add(bollards);
+  }
+
+  // -- Restaurant parking: wheel stops and a blue "P" sign ----------------------
+  private buildParkingProps(colliders: WorldCollider[]) {
+    const stops = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1.5, 0.12, 0.22).translate(0, 0.06, 0),
+      new THREE.MeshStandardMaterial({ color: '#d4d0c8', roughness: 0.85 }),
+      PARKING.bays.length
+    );
+    PARKING.bays.forEach((bx, i) => stops.setMatrixAt(i, compose(bx, 0.02, PARKING.bayFrontZ + 0.45)));
+    stops.receiveShadow = true;
+    this.group.add(stops);
+
+    // Sign post at the lot entrance
+    const sx = PARKING.bays[PARKING.bays.length - 1] + PARKING.bayWidth / 2 + 0.75;
+    const sz = PARKING.bayBackZ - 0.2;
+    const post = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.045, 0.05, 2.4, 10),
+      new THREE.MeshStandardMaterial({ color: '#6b7280', metalness: 0.6, roughness: 0.4 })
+    );
+    post.position.set(sx, 1.2, sz);
+    post.castShadow = true;
+    const { c, ctx } = makeCanvas(128, 128);
+    ctx.fillStyle = '#1d4ed8';
+    roundRect(ctx, 4, 4, 120, 120, 16);
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 6;
+    roundRect(ctx, 12, 12, 104, 104, 12);
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 84px Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('P', 64, 70);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const face = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.62), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.5 }));
+    face.position.set(sx, 2.15, sz + 0.06);
+    const back = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.62), new THREE.MeshStandardMaterial({ color: '#9ca3af' }));
+    back.position.set(sx, 2.15, sz + 0.055);
+    back.rotation.y = Math.PI;
+    this.group.add(post, back, face);
+    colliders.push({ kind: 'circle', x: sx, z: sz, r: 0.12 });
   }
 
   // -- Gabled old-town skyline with lit windows at night -----------------------

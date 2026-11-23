@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { sound } from './audio';
 import { QUALITY_PRESETS, ResolvedQuality } from './mobile';
+import { ParkingTraffic } from './parking';
 import {
   CAFE_THEMES,
   CITY_ZONES,
@@ -123,6 +124,9 @@ interface SimCustomer {
   activityTime: number;
   walkPhase: number;
   seedOffset: number;
+  /** Set when the customer came by car: they walk back to it when leaving. */
+  carId?: string;
+  seed?: number;
 }
 
 interface SimTable {
@@ -300,6 +304,8 @@ export class RestaurantWorldEngine {
   private passPos = { x: 0, z: 0 };
   private binPos = { x: 0, z: 0 };
   private passDishGroup: THREE.Group | null = null;
+  /** Customers who arrive by car and use the restaurant parking lot. */
+  private parking!: ParkingTraffic;
   /** Dishes cooking on machines (one per machine). */
   private cookJobs = new Map<StationType, { recipeId: RecipeId; quality: number; remaining: number; total: number; steam: number }>();
   private passDishKey = '';
@@ -675,6 +681,12 @@ export class RestaurantWorldEngine {
     // fountain roundabout, lanterns, plane trees, benches, planters, bollards & skyline
     const town = this.oldTown.build(maxAniso);
     this.scene.add(this.oldTown.group);
+
+    this.parking = new ParkingTraffic({
+      scene: this.scene,
+      createDriver: (archetype, seed) => createCharacterModel(getCustomerAppearance(archetype, seed)),
+      onDriverArrived: (mesh, archetype, seed, carId) => this.spawnCustomer({ mesh, archetype, seed, carId }),
+    });
     this.staticColliders.push(...town.colliders);
     this.streetLampBulbs.push(...town.lanternMats);
 
@@ -754,6 +766,7 @@ export class RestaurantWorldEngine {
     if (force) {
       this.lastTimeOfDay = -1;
       this.cookJobs.clear();
+      this.parking?.clear();
     }
 
     // 1. Rebuild Restaurant Structure & Tables if tier or cafe theme changed
@@ -2737,6 +2750,12 @@ export class RestaurantWorldEngine {
       if (includeParkedCar && this.playerCarParts) {
         resolveVehicleCapsule(pos, radius, this.carPos, this.carYaw);
       }
+      // Customer cars (parked in the lot or driving)
+      if (this.parking) {
+        for (const car of this.parking.getCarObstacles()) {
+          resolveVehicleCapsule(pos, radius, car.pos, car.yaw);
+        }
+      }
     }
 
     // Character-to-character separation so player doesn't ghost through NPCs
@@ -3048,8 +3067,9 @@ export class RestaurantWorldEngine {
     c.vel.set(0, 0, 0);
     c.stuckTimer = 0;
     c.repathCooldown = 0;
-    const exitZ = (Math.random() - 0.5) * 4.4;
-    c.targetPos.set(10.5, 0, exitZ);
+    // Drivers head to the footpath toward the parking lot; walk-ins leave along the piazza
+    if (c.carId) c.targetPos.set(10.6, 0, 2.4);
+    else c.targetPos.set(10.5, 0, (Math.random() - 0.5) * 4.4);
     c.waypoints = this.navGrid.findPath(
       c.mesh.root.position.x,
       c.mesh.root.position.z,
@@ -3065,11 +3085,17 @@ export class RestaurantWorldEngine {
     // Spawn new customer
     this.spawnTimer -= dt;
     const maxCustomers = this.tables.length + 2;
-    if (this.spawnTimer <= 0 && this.customers.length < maxCustomers) {
+    if (this.spawnTimer <= 0 && this.customers.length + this.parking.inTransitCount() < maxCustomers) {
       const interval = Math.max(2.6, 6.2 - save.reputation * 0.58) + getEarlySpawnDelay(save.restaurantLevel);
       this.spawnTimer = interval;
-      this.spawnCustomer();
+      // About 4 in 10 guests drive in and use the parking lot (if a bay is free)
+      const seed = Math.floor(Math.random() * 1000);
+      const archetype = this.rollArchetype();
+      const byCar = Math.random() < 0.4 && this.hasFreeTableOrTakeaway() && this.parking.trySpawnCar(archetype, seed);
+      if (!byCar) this.spawnCustomer({ archetype, seed });
     }
+
+    this.parking.update(dt, { pos: this.playerPos, inVehicle: this.inVehicle });
 
     const mgrCount = save.staff.filter((s) => s.role === 'manager').length;
     const decorMult = 1 + (save.equipmentLevels.decor - 1) * 0.1;
@@ -3321,7 +3347,12 @@ export class RestaurantWorldEngine {
         });
 
         if (res.reachedFinal || pos.x > 9.9) {
-          this.scene.remove(c.mesh.root);
+          if (c.carId) {
+            // Drivers walk back to their car and drive away
+            this.parking.driverReturn(c.carId, c.mesh, c.archetype, c.seed ?? 0);
+          } else {
+            this.scene.remove(c.mesh.root);
+          }
           this.customers.splice(i, 1);
         }
       }
@@ -3353,7 +3384,32 @@ export class RestaurantWorldEngine {
     }
   }
 
-  private spawnCustomer() {
+  private rollArchetype(): CustomerArchetype {
+    const save = this.saveRef.current;
+    const r = Math.random();
+    if (save.reputation >= 3.8 && r < 0.18) return 'vip';
+    if (save.reputation >= 3.2 && r < 0.28) return 'critic';
+    if (r < 0.42) return 'business';
+    if (r < 0.56) return 'impatient';
+    if (r < 0.72) return 'family';
+    return 'regular';
+  }
+
+  /** True if a new guest could be seated or join the takeaway queue right now. */
+  private hasFreeTableOrTakeaway(): boolean {
+    const save = this.saveRef.current;
+    if (this.tables.some((t) => !t.occupiedBy && !t.dirty)) return true;
+    const takeawayCap = save.restaurantLevel < 3 ? 1 : 2;
+    return this.customers.filter((c) => c.tableId === -1).length < takeawayCap;
+  }
+
+  /**
+   * Seats a new guest. Walk-ins appear at the usual arrival spot; drivers from the
+   * parking lot arrive with their existing character model. Returns false if there's no room.
+   */
+  private spawnCustomer(
+    opts: { archetype?: CustomerArchetype; seed?: number; mesh?: CharacterParts; carId?: string } = {}
+  ): boolean {
     const save = this.saveRef.current;
     // Find free clean table, or fallback to takeaway
     const freeClean = this.tables.filter((t) => !t.occupiedBy && !t.dirty);
@@ -3361,25 +3417,21 @@ export class RestaurantWorldEngine {
     const existingTakeaway = this.customers.filter((c) => c.tableId === -1);
     const takeawayCap = save.restaurantLevel < 3 ? 1 : 2;
     if (isTakeaway && existingTakeaway.length >= takeawayCap) {
-      return;
+      return false;
     }
 
-    const seed = Math.floor(Math.random() * 1000);
-    let archetype: CustomerArchetype = 'regular';
-    const r = Math.random();
-    if (save.reputation >= 3.8 && r < 0.18) archetype = 'vip';
-    else if (save.reputation >= 3.2 && r < 0.28) archetype = 'critic';
-    else if (r < 0.42) archetype = 'business';
-    else if (r < 0.56) archetype = 'impatient';
-    else if (r < 0.72) archetype = 'family';
+    const seed = opts.seed ?? Math.floor(Math.random() * 1000);
+    const archetype: CustomerArchetype = opts.archetype ?? this.rollArchetype();
 
-    const mesh = createCharacterModel(getCustomerAppearance(archetype, seed));
-    const spawnPos = new THREE.Vector3(9.4 + Math.random() * 1.4, 0, (Math.random() - 0.5) * 4.5);
+    const mesh = opts.mesh ?? createCharacterModel(getCustomerAppearance(archetype, seed));
+    const spawnPos = opts.mesh
+      ? opts.mesh.root.position.clone()
+      : new THREE.Vector3(9.4 + Math.random() * 1.4, 0, (Math.random() - 0.5) * 4.5);
     this.resolveNpcStaticColliders(spawnPos, 0.28);
     mesh.root.position.copy(spawnPos);
     this.scene.add(mesh.root);
 
-    const id = `cust_${Date.now()}_${seed}`;
+    const id = `cust_${Date.now()}_${seed}_${Math.random().toString(36).slice(2, 5)}`;
     const name = CUSTOMER_NAMES[seed % CUSTOMER_NAMES.length];
 
     let tableId = -1;
@@ -3438,7 +3490,10 @@ export class RestaurantWorldEngine {
       activityTime: 0,
       walkPhase: 0,
       seedOffset: (seed % 100) * 0.17,
+      carId: opts.carId,
+      seed,
     });
+    return true;
   }
 
   private freeTable(tableId: number, makeDirty: boolean) {
