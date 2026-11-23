@@ -4382,3 +4382,219 @@ export function createCoveredMachineMesh(type: StationType, dishName: string, un
 
   return g;
 }
+
+/** Rounded rectangle path with a fallback for older WebViews without ctx.roundRect. */
+function roundedRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  const c = ctx as CanvasRenderingContext2D & { roundRect?: (...a: number[]) => void };
+  ctx.beginPath();
+  if (typeof c.roundRect === 'function') {
+    c.roundRect(x, y, w, h, r);
+  } else {
+    ctx.rect(x, y, w, h);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Realistic commercial kitchen floor: unglazed red quarry tile (15 cm) with dark
+// epoxy grout, per-tile colour variation, worn sheen and anti-slip texture.
+// One texture tile covers 1.2 m × 1.2 m (8 × 8 tiles); repeats are world-scaled.
+// ---------------------------------------------------------------------------
+export function createQuarryTileFloorTextures(
+  widthM: number,
+  depthM: number,
+  maxAnisotropy = 4
+): { map: THREE.CanvasTexture; bumpMap: THREE.CanvasTexture; roughnessMap: THREE.CanvasTexture } {
+  const size = 512;
+  const tiles = 8;
+  const cell = size / tiles;
+  const grout = 4;
+
+  const make = () => {
+    const c = document.createElement('canvas');
+    c.width = size;
+    c.height = size;
+    return { c, ctx: c.getContext('2d')! };
+  };
+  const color = make();
+  const bump = make();
+  const rough = make();
+
+  // Deterministic random so the floor looks the same every rebuild
+  let seed = 1337;
+  const rnd = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+
+  // Grout
+  color.ctx.fillStyle = '#3a3330';
+  color.ctx.fillRect(0, 0, size, size);
+  bump.ctx.fillStyle = '#2a2a2a';
+  bump.ctx.fillRect(0, 0, size, size);
+  rough.ctx.fillStyle = '#f0f0f0'; // grout is matte
+  rough.ctx.fillRect(0, 0, size, size);
+
+  const baseTones = [
+    [148, 62, 42],
+    [158, 70, 46],
+    [139, 56, 38],
+    [166, 78, 52],
+    [152, 66, 40],
+    [131, 54, 40],
+  ];
+
+  for (let r = 0; r < tiles; r++) {
+    for (let c = 0; c < tiles; c++) {
+      const x = c * cell + grout / 2;
+      const y = r * cell + grout / 2;
+      const s = cell - grout;
+      const [br, bg, bb] = baseTones[Math.floor(rnd() * baseTones.length)];
+      const v = (rnd() - 0.5) * 16;
+      const tile = (k: number) => `rgb(${Math.round(br + v + k)},${Math.round(bg + v * 0.6 + k * 0.6)},${Math.round(bb + v * 0.4 + k * 0.4)})`;
+
+      // Body with a soft darker rim (clay fired unevenly)
+      const g = color.ctx.createRadialGradient(x + s / 2, y + s / 2, s * 0.15, x + s / 2, y + s / 2, s * 0.75);
+      g.addColorStop(0, tile(6));
+      g.addColorStop(1, tile(-14));
+      color.ctx.fillStyle = g;
+      roundedRectPath(color.ctx, x, y, s, s, 3);
+      color.ctx.fill();
+
+      // Clay speckles and small pits
+      for (let k = 0; k < 40; k++) {
+        const px = x + 2 + rnd() * (s - 4);
+        const py = y + 2 + rnd() * (s - 4);
+        const dark = rnd() < 0.6;
+        color.ctx.fillStyle = dark ? 'rgba(60,25,15,0.35)' : 'rgba(230,170,130,0.28)';
+        color.ctx.fillRect(px, py, 1.5, 1.5);
+        if (dark && rnd() < 0.3) {
+          bump.ctx.fillStyle = '#9a9a9a';
+          bump.ctx.fillRect(px, py, 2, 2);
+        }
+      }
+
+      // Raised tile face for the bump map (slightly domed)
+      const bg2 = bump.ctx.createRadialGradient(x + s / 2, y + s / 2, 0, x + s / 2, y + s / 2, s * 0.72);
+      bg2.addColorStop(0, '#d8d8d8');
+      bg2.addColorStop(1, '#bcbcbc');
+      bump.ctx.fillStyle = bg2;
+      roundedRectPath(bump.ctx, x, y, s, s, 3);
+      bump.ctx.fill();
+
+      // Roughness: unglazed (fairly matte) with polished, worn patches from foot traffic
+      const base = 150 + Math.round(rnd() * 40);
+      rough.ctx.fillStyle = `rgb(${base},${base},${base})`;
+      rough.ctx.fillRect(x, y, s, s);
+    }
+  }
+
+  // Worn traffic sheen + faint scuffs across tiles
+  for (let k = 0; k < 14; k++) {
+    const cx = rnd() * size;
+    const cy = rnd() * size;
+    const rr = 30 + rnd() * 70;
+    const g = rough.ctx.createRadialGradient(cx, cy, 0, cx, cy, rr);
+    g.addColorStop(0, 'rgba(70,70,70,0.55)');
+    g.addColorStop(1, 'rgba(70,70,70,0)');
+    rough.ctx.fillStyle = g;
+    rough.ctx.fillRect(cx - rr, cy - rr, rr * 2, rr * 2);
+  }
+  color.ctx.strokeStyle = 'rgba(40,20,12,0.18)';
+  color.ctx.lineWidth = 1;
+  for (let k = 0; k < 22; k++) {
+    const x0 = rnd() * size;
+    const y0 = rnd() * size;
+    color.ctx.beginPath();
+    color.ctx.moveTo(x0, y0);
+    color.ctx.quadraticCurveTo(x0 + (rnd() - 0.5) * 40, y0 + (rnd() - 0.5) * 40, x0 + (rnd() - 0.5) * 70, y0 + (rnd() - 0.5) * 70);
+    color.ctx.stroke();
+  }
+
+  const finish = (c: HTMLCanvasElement, srgb: boolean) => {
+    const t = new THREE.CanvasTexture(c);
+    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    t.wrapS = THREE.RepeatWrapping;
+    t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(widthM / 1.2, depthM / 1.2);
+    t.anisotropy = maxAnisotropy;
+    return t;
+  };
+  return {
+    map: finish(color.c, true),
+    bumpMap: finish(bump.c, false),
+    roughnessMap: finish(rough.c, false),
+  };
+}
+
+let antiFatigueTexture: THREE.CanvasTexture | null = null;
+
+/** Black rubber anti-fatigue mat with drainage holes and bevelled edges. */
+export function createAntiFatigueMatMesh(width: number, depth: number): THREE.Group {
+  if (!antiFatigueTexture) {
+    const c = document.createElement('canvas');
+    c.width = 128;
+    c.height = 128;
+    const ctx = c.getContext('2d')!;
+    ctx.fillStyle = '#1c1c1e';
+    ctx.fillRect(0, 0, 128, 128);
+    // Staggered drainage holes (transparent → floor shows through)
+    ctx.globalCompositeOperation = 'destination-out';
+    for (let row = 0; row < 8; row++) {
+      for (let col = 0; col < 8; col++) {
+        const x = col * 16 + (row % 2 ? 8 : 0) + 4;
+        const y = row * 16 + 4;
+        roundedRectPath(ctx, x, y, 9, 9, 2.5);
+        ctx.fill();
+      }
+    }
+    antiFatigueTexture = new THREE.CanvasTexture(c);
+    antiFatigueTexture.colorSpace = THREE.SRGBColorSpace;
+    antiFatigueTexture.wrapS = antiFatigueTexture.wrapT = THREE.RepeatWrapping;
+  }
+  const tex = antiFatigueTexture.clone();
+  tex.repeat.set(width / 0.22, depth / 0.22);
+  tex.needsUpdate = true;
+  const rubber = new THREE.MeshStandardMaterial({ color: '#2a2a2c', roughness: 0.92 });
+
+  const g = new THREE.Group();
+  const top = new THREE.Mesh(
+    new THREE.PlaneGeometry(width - 0.08, depth - 0.08),
+    new THREE.MeshStandardMaterial({ map: tex, transparent: false, alphaTest: 0.5, roughness: 0.9 })
+  );
+  top.rotation.x = -Math.PI / 2;
+  top.position.y = 0.016;
+  top.receiveShadow = true;
+  g.add(top);
+  // Solid bevelled border
+  const edge = 0.05;
+  for (const [w, d, x, z] of [
+    [width, edge, 0, depth / 2 - edge / 2],
+    [width, edge, 0, -depth / 2 + edge / 2],
+    [edge, depth, width / 2 - edge / 2, 0],
+    [edge, depth, -width / 2 + edge / 2, 0],
+  ] as const) {
+    const b = new THREE.Mesh(new THREE.BoxGeometry(w, 0.014, d), rubber);
+    b.position.set(x, 0.008, z);
+    b.receiveShadow = true;
+    g.add(b);
+  }
+  return g;
+}
+
+/** Square stainless-steel floor drain with slotted grate. */
+export function createFloorDrainMesh(): THREE.Group {
+  const g = new THREE.Group();
+  const steel = new THREE.MeshStandardMaterial({ color: '#b8bcc2', metalness: 0.85, roughness: 0.32 });
+  const dark = new THREE.MeshStandardMaterial({ color: '#111315', roughness: 0.8 });
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.008, 0.34), steel);
+  frame.position.y = 0.004;
+  const pit = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.009, 0.28), dark);
+  pit.position.y = 0.0045;
+  g.add(frame, pit);
+  for (let i = 0; i < 7; i++) {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.026, 0.01, 0.27), steel);
+    bar.position.set(-0.12 + i * 0.04, 0.006, 0);
+    g.add(bar);
+  }
+  return g;
+}
