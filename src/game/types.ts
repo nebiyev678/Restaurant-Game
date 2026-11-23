@@ -363,6 +363,9 @@ export interface ProjectedBubble {
   stationType?: StationType;
   recipeIds?: RecipeId[];
   pendingCount?: number;
+  /** Covered machine the player hasn't unlocked yet, and the level that unlocks it. */
+  locked?: boolean;
+  unlockLevel?: number;
 }
 
 export interface FloatingPopup {

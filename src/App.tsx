@@ -9,6 +9,7 @@ import {
   Clock,
   Coins,
   Home,
+  Lock,
   Flame,
   MapPin,
   Music,
@@ -1015,23 +1016,42 @@ export default function App() {
                   key={b.id}
                   onClick={() => {
                     haptic(HAPTIC.tap);
-                    engineRef.current?.openCookAtStation(b.stationType!);
+                    if (b.locked) {
+                      // Covered machine: show the recipes it will unlock
+                      sound.playClick();
+                      setDrawerSubTab(undefined);
+                      setDrawerTab('kitchen');
+                    } else {
+                      engineRef.current?.openCookAtStation(b.stationType!);
+                    }
                   }}
-                  aria-label={`${b.label}: ${(b.recipeIds ?? []).map((id) => RECIPES[id].name).join(', ')}${
-                    pending ? `, ${pending} waiting` : ''
-                  }`}
+                  aria-label={
+                    b.locked
+                      ? `Locked machine, unlocks at level ${b.unlockLevel}: ${(b.recipeIds ?? []).map((id) => RECIPES[id].name).join(', ')}`
+                      : `${b.label}: ${(b.recipeIds ?? []).map((id) => RECIPES[id].name).join(', ')}${
+                          pending ? `, ${pending} waiting` : ''
+                        }`
+                  }
                   style={{ left: `${b.screenX}px`, top: `${b.screenY}px`, transform: 'translate(-50%, -100%)' }}
                   className={`pointer-events-auto absolute flex items-center gap-1 rounded-full border shadow-md cursor-pointer ${
                     compact ? 'pl-0.5 pr-1.5 py-0.5' : 'pl-1 pr-2 py-1'
-                  } ${pending ? 'bg-emerald-600/95 border-emerald-300' : 'bg-slate-950/80 border-slate-600/70'}`}
+                  } ${
+                    b.locked
+                      ? 'bg-stone-800/85 border-stone-500/60 opacity-90'
+                      : pending
+                        ? 'bg-emerald-600/95 border-emerald-300'
+                        : 'bg-slate-950/80 border-slate-600/70'
+                  }`}
                 >
-                  <span className="flex -space-x-1.5">
+                  {b.locked && <Lock className={`${compact ? 'w-2.5 h-2.5' : 'w-3 h-3'} text-amber-300 ml-1`} />}
+                  <span className={`flex -space-x-1.5 ${b.locked ? 'grayscale opacity-70' : ''}`}>
                     {(b.recipeIds ?? []).slice(0, 3).map((id) => (
                       <PreviewThumb
                         key={id}
                         kind="recipe"
                         id={id}
                         alt={RECIPES[id].name}
+                        locked={b.locked}
                         className={`${compact ? 'w-5 h-5' : 'w-6 h-6'} rounded-full ring-1 ring-slate-900`}
                       />
                     ))}

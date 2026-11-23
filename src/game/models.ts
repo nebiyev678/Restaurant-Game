@@ -4205,3 +4205,180 @@ export function createEntranceRunnerRugMesh(
 }
 
 
+
+// ---------------------------------------------------------------------------
+// Locked kitchen machine: the real machine shape under a draped canvas cover,
+// strapped like a delivered package, with a paper tag (dish + unlock level).
+// ---------------------------------------------------------------------------
+let coverFabricTexture: THREE.CanvasTexture | null = null;
+
+function getCoverFabricTexture(): THREE.CanvasTexture {
+  if (coverFabricTexture) return coverFabricTexture;
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 256;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#c9b48f';
+  ctx.fillRect(0, 0, 256, 256);
+  // Canvas weave
+  for (let y = 0; y < 256; y += 3) {
+    ctx.fillStyle = y % 6 === 0 ? 'rgba(255,255,255,0.06)' : 'rgba(80,60,30,0.07)';
+    ctx.fillRect(0, y, 256, 1);
+  }
+  for (let x = 0; x < 256; x += 3) {
+    ctx.fillStyle = x % 6 === 0 ? 'rgba(255,255,255,0.05)' : 'rgba(80,60,30,0.06)';
+    ctx.fillRect(x, 0, 1, 256);
+  }
+  // Soft vertical fold shading
+  for (let i = 0; i < 9; i++) {
+    const x = 14 + i * 28 + Math.sin(i * 2.1) * 6;
+    const g = ctx.createLinearGradient(x - 10, 0, x + 10, 0);
+    g.addColorStop(0, 'rgba(60,45,25,0)');
+    g.addColorStop(0.5, 'rgba(60,45,25,0.18)');
+    g.addColorStop(1, 'rgba(60,45,25,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x - 10, 0, 20, 256);
+  }
+  coverFabricTexture = new THREE.CanvasTexture(c);
+  coverFabricTexture.colorSpace = THREE.SRGBColorSpace;
+  coverFabricTexture.wrapS = coverFabricTexture.wrapT = THREE.RepeatWrapping;
+  return coverFabricTexture;
+}
+
+function createUnlockTagTexture(dishName: string, unlockLevel: number): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 192;
+  c.height = 128;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#fdf6e3';
+  ctx.beginPath();
+  ctx.moveTo(24, 0);
+  ctx.lineTo(192, 0);
+  ctx.lineTo(192, 128);
+  ctx.lineTo(24, 128);
+  ctx.lineTo(0, 64);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#c9b48f';
+  ctx.beginPath();
+  ctx.arc(22, 64, 7, 0, Math.PI * 2);
+  ctx.fill();
+  // Padlock
+  ctx.strokeStyle = '#7c2d12';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(62, 46, 11, Math.PI, 0);
+  ctx.stroke();
+  ctx.fillStyle = '#b45309';
+  ctx.fillRect(46, 46, 32, 26);
+  ctx.fillStyle = '#7c2d12';
+  ctx.font = 'bold 30px Arial, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(`Lv ${unlockLevel}`, 90, 70);
+  ctx.font = 'bold 19px Arial, sans-serif';
+  ctx.fillStyle = '#44403c';
+  ctx.textAlign = 'center';
+  const name = dishName.length > 15 ? `${dishName.slice(0, 14)}…` : dishName;
+  ctx.fillText(name, 108, 108);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+export function createCoveredMachineMesh(type: StationType, dishName: string, unlockLevel: number): THREE.Group {
+  const g = new THREE.Group();
+
+  // Measure the real machine so the cover follows its shape
+  const machine = createKitchenStationMesh(type);
+  const box = new THREE.Box3().setFromObject(machine);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const w = size.x + 0.08;
+  const h = Math.max(0.6, size.y - 0.02);
+  const d = size.z + 0.08;
+
+  // Draped cover: subdivided box, flared at the bottom, sagging on top, with wrinkles
+  const geo = new THREE.BoxGeometry(w, h, d, 10, 8, 10);
+  const pos = geo.attributes.position as THREE.BufferAttribute;
+  const v = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i);
+    const t = (v.y + h / 2) / h; // 0 bottom → 1 top
+    const flare = 1 + (1 - t) * 0.09;
+    v.x *= flare;
+    v.z *= flare;
+    // Rounded top edges
+    if (t > 0.92) {
+      const k = (t - 0.92) / 0.08;
+      v.x *= 1 - k * 0.05;
+      v.z *= 1 - k * 0.05;
+    }
+    // Top sags between the machine's high points
+    if (t > 0.99) v.y -= 0.035 * Math.cos((v.x / w) * Math.PI) * Math.cos((v.z / d) * Math.PI);
+    // Vertical wrinkles + slight hem wave
+    v.x += Math.sin(v.z * 11 + v.y * 3) * 0.012 * (1 - t * 0.6);
+    v.z += Math.sin(v.x * 11 - v.y * 2) * 0.012 * (1 - t * 0.6);
+    if (t < 0.05) v.y += Math.sin(v.x * 9 + v.z * 7) * 0.02;
+    pos.setXYZ(i, v.x, v.y, v.z);
+  }
+  geo.computeVertexNormals();
+  const fabric = getCoverFabricTexture().clone();
+  fabric.repeat.set(Math.max(1, w), Math.max(1, h));
+  fabric.needsUpdate = true;
+  const cover = new THREE.Mesh(
+    geo,
+    new THREE.MeshStandardMaterial({ map: fabric, color: '#e8dcc4', roughness: 0.95 })
+  );
+  cover.position.set(center.x, box.min.y + h / 2 + 0.01, center.z);
+  cover.castShadow = true;
+  cover.receiveShadow = true;
+  g.add(cover);
+
+  // Two cargo straps crossing over the top, like a wrapped package
+  const strapMat = new THREE.MeshStandardMaterial({ color: '#c2410c', roughness: 0.6 });
+  const buckleMat = new THREE.MeshStandardMaterial({ color: '#d4d4d8', metalness: 0.8, roughness: 0.3 });
+  const topY = box.min.y + h + 0.012;
+  const strapT = 0.012;
+  const strapW = 0.08;
+  const sx = w * 1.05;
+  const sz = d * 1.05;
+  // Strap running along X (over the top and down both ends)
+  const strapX = new THREE.Mesh(new THREE.BoxGeometry(sx, strapT, strapW), strapMat);
+  strapX.position.set(center.x, topY, center.z);
+  const strapXEndA = new THREE.Mesh(new THREE.BoxGeometry(strapT, h * 0.98, strapW), strapMat);
+  strapXEndA.position.set(center.x - sx / 2, box.min.y + h / 2, center.z);
+  const strapXEndB = strapXEndA.clone();
+  strapXEndB.position.x = center.x + sx / 2;
+  // Strap running along Z
+  const strapZ = new THREE.Mesh(new THREE.BoxGeometry(strapW, strapT, sz), strapMat);
+  strapZ.position.set(center.x, topY + 0.004, center.z);
+  const strapZEndA = new THREE.Mesh(new THREE.BoxGeometry(strapW, h * 0.98, strapT), strapMat);
+  strapZEndA.position.set(center.x, box.min.y + h / 2, center.z - sz / 2);
+  const strapZEndB = strapZEndA.clone();
+  strapZEndB.position.z = center.z + sz / 2;
+  // Ratchet buckle on the front strap
+  const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.09, 0.03), buckleMat);
+  buckle.position.set(center.x, box.min.y + h * 0.55, center.z + sz / 2 + 0.015);
+  g.add(strapX, strapXEndA, strapXEndB, strapZ, strapZEndA, strapZEndB, buckle);
+
+  // Paper tag hanging from the front strap: lock + unlock level + dish
+  const tag = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.42, 0.28),
+    new THREE.MeshStandardMaterial({
+      map: createUnlockTagTexture(dishName, unlockLevel),
+      roughness: 0.9,
+      side: THREE.DoubleSide,
+    })
+  );
+  tag.position.set(center.x + 0.2, box.min.y + h * 0.72, center.z + sz / 2 + 0.03);
+  tag.rotation.z = -0.12;
+  const string = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.004, 0.004, 0.14, 4),
+    new THREE.MeshStandardMaterial({ color: '#57534e' })
+  );
+  string.position.set(center.x + 0.04, box.min.y + h * 0.72 + 0.04, center.z + sz / 2 + 0.03);
+  string.rotation.z = 1.2;
+  g.add(tag, string);
+
+  return g;
+}
