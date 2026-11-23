@@ -8,7 +8,7 @@ interface FloatingJoystickProps {
   bottomInset?: number;
 }
 
-const RADIUS = 52; // max knob travel in px
+const RADIUS = 44; // max knob travel in px
 const DEAD_ZONE = 0.12;
 const TAP_MAX_MS = 260;
 const TAP_MAX_MOVE = 10;
@@ -91,10 +91,10 @@ export const FloatingJoystick: React.FC<FloatingJoystickProps> = ({ onMove, onTa
       {/* Resting hint */}
       {!origin && (
         <div
-          className="pointer-events-none absolute w-28 h-28 rounded-full border-2 border-white/15 bg-slate-950/25 flex items-center justify-center"
-          style={{ left: 'calc(28px + env(safe-area-inset-left))', bottom: 28 }}
+          className="pointer-events-none absolute w-20 h-20 rounded-full border border-white/15 bg-slate-950/20 flex items-center justify-center"
+          style={{ left: 'calc(20px + env(safe-area-inset-left))', bottom: 16 }}
         >
-          <div className="w-11 h-11 rounded-full bg-amber-400/40 border-2 border-amber-100/30" />
+          <div className="w-8 h-8 rounded-full bg-amber-400/35 border border-amber-100/30" />
         </div>
       )}
       {/* Active stick under the thumb */}
@@ -103,10 +103,10 @@ export const FloatingJoystick: React.FC<FloatingJoystickProps> = ({ onMove, onTa
           className="pointer-events-none absolute"
           style={{ left: origin.x, top: origin.y, transform: 'translate(-50%, -50%)' }}
         >
-          <div className="relative w-32 h-32 rounded-full bg-slate-950/55 border-2 border-slate-300/40 shadow-xl flex items-center justify-center">
-            <div className="w-14 h-14 rounded-full border border-white/15" />
+          <div className="relative w-28 h-28 rounded-full bg-slate-950/45 border border-slate-300/40 shadow-xl flex items-center justify-center">
+            <div className="w-12 h-12 rounded-full border border-white/15" />
             <div
-              className="absolute w-14 h-14 rounded-full bg-amber-400 border-2 border-amber-100 shadow-lg"
+              className="absolute w-12 h-12 rounded-full bg-amber-400 border-2 border-amber-100 shadow-lg"
               style={{ transform: `translate(${knob.x}px, ${knob.y}px)` }}
             />
           </div>
