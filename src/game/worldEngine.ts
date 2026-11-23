@@ -26,7 +26,8 @@ import {
   rollComboSize,
   getCleanlinessPatienceMult,
   getEarlyPatienceMult,
-  getEarlySpawnDelay,
+  getCustomerSpawnInterval,
+  getMaxOpenOrders,
   getCleanlinessReputationMult,
   getPrestigeTipBonus,
   getRestaurantTier,
@@ -208,8 +209,8 @@ export interface EngineCallbacks {
   onDeliveryIncome: (amount: number) => void;
   onTableCleaned: () => void;
   onDirtyChanged: (cleanlinessDelta: number) => void;
-  /** A machine finished cooking; `toPass` = it went to the pass counter (player was busy / away). */
-  onDishReady: (recipeId: RecipeId, qualityBonus: number, toPass: boolean) => void;
+  /** A machine finished cooking; the dish now waits on that machine for the chef to take it. */
+  onDishReady: (recipeId: RecipeId, qualityBonus: number, station: StationType) => void;
   /** Fired once when the in-game clock passes midnight during active play. */
   onDayEnded: () => void;
   /** Fired when a hired staff member finishes a task (cooking, serving, cleaning, checkout). */
@@ -329,9 +330,16 @@ export class RestaurantWorldEngine {
   private streakCount = 0;
   private streakTimer = 0;
   /** Dishes cooking on machines (one per machine). */
-  private cookJobs = new Map<StationType, { recipeId: RecipeId; quality: number; remaining: number; total: number; steam: number }>();
+  private cookJobs = new Map<
+    StationType,
+    { recipeId: RecipeId; quality: number; remaining: number; total: number; steam: number; done?: boolean; mesh?: THREE.Group }
+  >();
+  /** Machine the chef is walking to in order to pick up its finished dish. */
+  private pendingTakeStation: StationType | null = null;
   private passDishKey = '';
   static readonly PASS_SLOTS = 6;
+  /** Height of a kitchen machine's work surface (finished dishes sit here). */
+  static readonly STATION_TOP_Y = 1.08;
   private staffAgents: SimStaff[] = [];
 
   private spawnTimer = 1.5;
@@ -493,30 +501,75 @@ export class RestaurantWorldEngine {
 
   private updateCookJobs(dt: number) {
     for (const [type, job] of this.cookJobs) {
-      job.remaining -= dt;
       const st = this.stations.find((s) => s.type === type);
+      if (job.done) {
+        // Finished dish sits on the machine (re-added if the restaurant was rebuilt)
+        if (st && (!job.mesh || !job.mesh.parent)) this.placeDishOnStation(type, job);
+        if (job.mesh) job.mesh.rotation.y += dt * 0.8;
+        job.steam -= dt;
+        if (st && job.steam <= 0) {
+          job.steam = 1.1;
+          this.spawnBurst(st.mx, 1.5, st.mz, '#fde68a', 2);
+        }
+        continue;
+      }
+      job.remaining -= dt;
       job.steam -= dt;
       if (st && job.steam <= 0) {
         job.steam = 0.45;
         this.spawnBurst(st.mx + 0.15, 1.35, st.mz, '#e5e7eb', 3);
       }
       if (job.remaining > 0) continue;
-      this.cookJobs.delete(type);
-      // Straight into the chef's hands if they're nearby and empty-handed, otherwise onto the pass
-      const near = st ? Math.hypot(this.playerPos.x - st.x, this.playerPos.z - st.z) < 3 : false;
-      const toHands = near && !this.heldRecipe && !this.inVehicle;
-      if (toHands) {
-        this.setHeldDish(job.recipeId, job.quality);
-      } else {
-        this.readyDishes.push({
-          id: `dish_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-          recipeId: job.recipeId,
-          qualityBonus: job.quality,
-        });
-      }
+      // Done: the dish stays on its machine until the chef comes to take it
+      job.done = true;
+      job.remaining = 0;
+      job.steam = 0.6;
+      this.placeDishOnStation(type, job);
       if (st) this.spawnBurst(st.mx + 0.15, 1.3, st.mz, '#facc15', 8);
-      this.callbacks.onDishReady(job.recipeId, job.quality, !toHands);
+      this.callbacks.onDishReady(job.recipeId, job.quality, type);
     }
+
+    // Chef walked over after tapping the machine sign: pick the dish up on arrival
+    if (this.pendingTakeStation) {
+      const st = this.stations.find((s) => s.type === this.pendingTakeStation);
+      const job = this.cookJobs.get(this.pendingTakeStation);
+      if (!st || !job?.done || this.heldRecipe || this.inVehicle) {
+        this.pendingTakeStation = null;
+      } else if (Math.hypot(this.playerPos.x - st.x, this.playerPos.z - st.z) < 1.7) {
+        this.takeFromStation(this.pendingTakeStation);
+        this.pendingTakeStation = null;
+      }
+    }
+  }
+
+  private placeDishOnStation(type: StationType, job: { recipeId: RecipeId; mesh?: THREE.Group }) {
+    const st = this.stations.find((s) => s.type === type);
+    if (!st) return;
+    if (job.mesh) job.mesh.removeFromParent();
+    const dish = createDishMesh(job.recipeId);
+    dish.scale.setScalar(0.95);
+    // Front edge of the machine, toward where the chef stands
+    dish.position.set(st.mx + (st.x - st.mx) * 0.22, RestaurantWorldEngine.STATION_TOP_Y, st.mz + (st.z - st.mz) * 0.22);
+    this.restaurantGroup.add(dish);
+    job.mesh = dish;
+  }
+
+  /** True when a finished dish is waiting on this machine. */
+  public isStationReady(type: StationType): boolean {
+    return !!this.cookJobs.get(type)?.done;
+  }
+
+  /** Chef picks the finished dish up from its machine (must be standing at it, hands empty). */
+  public takeFromStation(type: StationType): boolean {
+    const job = this.cookJobs.get(type);
+    const st = this.stations.find((s) => s.type === type);
+    if (!job?.done || !st || this.heldRecipe || this.inVehicle) return false;
+    if (Math.hypot(this.playerPos.x - st.x, this.playerPos.z - st.z) > 2.4) return false;
+    job.mesh?.removeFromParent();
+    this.cookJobs.delete(type);
+    this.setHeldDish(job.recipeId, job.quality);
+    sound.playClick();
+    return true;
   }
 
   /** Puts the carried dish on the pass counter (waiters or the player can serve it later). */
@@ -591,6 +644,16 @@ export class RestaurantWorldEngine {
 
   /** Opens the cooking window for a machine (from its floating sign). */
   public openCookAtStation(type: StationType) {
+    // A finished dish is waiting: take it here, or walk over and take it on arrival
+    if (this.cookJobs.get(type)?.done && !this.heldRecipe && !this.inVehicle) {
+      if (this.takeFromStation(type)) return;
+      const st = this.stations.find((s) => s.type === type);
+      if (st) {
+        this.pendingTakeStation = type;
+        this.setTapTarget(new THREE.Vector3(st.x, 0, st.z));
+        return;
+      }
+    }
     const pending = this.orders.find((o) => this.remainingAtStation(o, type)) ?? null;
     this.callbacks.onCookRequested(type, pending);
   }
@@ -2042,7 +2105,9 @@ export class RestaurantWorldEngine {
       t.dirty = false;
     }
     this.readyDishes = [];
+    this.cookJobs.forEach((j) => j.mesh?.removeFromParent());
     this.cookJobs.clear();
+    this.pendingTakeStation = null;
     this.clearHeldDish();
     this.parking?.clear();
     this.streakCount = 0;
@@ -2101,6 +2166,8 @@ export class RestaurantWorldEngine {
       this.putHeldDishOnCounter();
     } else if (prompt.actionType === 'pick_up') {
       this.pickUpFromCounter();
+    } else if (prompt.actionType === 'take_dish' && prompt.stationType) {
+      if (!this.takeFromStation(prompt.stationType)) this.callbacks.onCookRequested(prompt.stationType, null);
     } else if (prompt.actionType === 'trash') {
       this.trashHeldDish();
     }
@@ -2199,6 +2266,16 @@ export class RestaurantWorldEngine {
     if (playerInside) {
       for (const st of this.stations) {
         if (Math.hypot(this.playerPos.x - st.x, this.playerPos.z - st.z) < 2.15) {
+          const readyJob = this.cookJobs.get(st.type);
+          if (readyJob?.done) {
+            return {
+              id: `take_${st.type}`,
+              label: `Take ${RECIPES[readyJob.recipeId].name}`,
+              sublabel: this.heldRecipe ? 'Hands full: serve first' : 'Ready on the machine',
+              actionType: 'take_dish',
+              stationType: st.type,
+            };
+          }
           const pending = this.orders.find((o) => this.remainingAtStation(o, st.type));
           const pendingDish = pending ? this.remainingAtStation(pending, st.type) : undefined;
           const stationLabel = STATION_INFO[st.type].name;
@@ -2559,7 +2636,13 @@ export class RestaurantWorldEngine {
     for (const st of this.stations) {
       const hasOrder = this.orders.some((o) => this.remainingAtStation(o, st.type));
       const mat = st.ring.material as THREE.MeshBasicMaterial;
-      if (hasOrder) {
+      if (this.cookJobs.get(st.type)?.done) {
+        // Dish waiting to be picked up: bright gold pulse
+        const k = 0.5 + 0.5 * Math.sin(this.stationPulseTime * 7);
+        mat.color.set('#facc15');
+        mat.opacity = 0.6 + k * 0.4;
+        st.ring.scale.setScalar(1.05 + k * 0.22);
+      } else if (hasOrder) {
         const k = 0.5 + 0.5 * Math.sin(this.stationPulseTime * 5);
         mat.color.set('#22c55e');
         mat.opacity = 0.55 + k * 0.4;
@@ -2679,6 +2762,7 @@ export class RestaurantWorldEngine {
     _v1.set(0, 0, 0);
     if (hasDirectional) {
       this.tapWalkTarget = null;
+      this.pendingTakeStation = null;
       this.tapWaypoints = [];
       const sinA = Math.sin(this.camAzimuth);
       const cosA = Math.cos(this.camAzimuth);
@@ -3225,9 +3309,15 @@ export class RestaurantWorldEngine {
     // Spawn new customer
     this.spawnTimer -= dt;
     const maxCustomers = this.tables.length + 2;
-    if (this.spawnTimer <= 0 && this.customers.length + this.parking.inTransitCount() < maxCustomers) {
-      const interval = Math.max(2.6, 6.2 - save.reputation * 0.58) + getEarlySpawnDelay(save.restaurantLevel);
-      this.spawnTimer = interval;
+    const helpers = save.staff.filter((m) => m.role === 'chef' || m.role === 'waiter').length;
+    // Calm pace: a new guest only arrives while the open orders are still manageable
+    const openOrders = this.orders.length;
+    if (
+      this.spawnTimer <= 0 &&
+      this.customers.length + this.parking.inTransitCount() < maxCustomers &&
+      openOrders < getMaxOpenOrders(save.restaurantLevel, helpers)
+    ) {
+      this.spawnTimer = getCustomerSpawnInterval(save.restaurantLevel, save.reputation, helpers);
       // About 4 in 10 guests drive in and use the parking lot (if a bay is free)
       const seed = Math.floor(Math.random() * 1000);
       const archetype = this.rollArchetype();
@@ -4131,8 +4221,9 @@ export class RestaurantWorldEngine {
           cookingRecipeId: this.cookJobs.get(st.type)?.recipeId,
           cookProgress: (() => {
             const j = this.cookJobs.get(st.type);
-            return j ? THREE.MathUtils.clamp(1 - j.remaining / j.total, 0, 1) : undefined;
+            return j ? (j.done ? 1 : THREE.MathUtils.clamp(1 - j.remaining / j.total, 0, 1)) : undefined;
           })(),
+          cookReady: !!this.cookJobs.get(st.type)?.done,
           label: STATION_INFO[st.type].short,
           stationType: st.type,
           recipeIds,

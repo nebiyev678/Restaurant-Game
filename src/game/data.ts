@@ -1208,10 +1208,25 @@ export function getEarlyPatienceMult(restaurantLevel: number): number {
 
 /** Extra seconds between arrivals early on, so new players are never swamped. */
 export function getEarlySpawnDelay(restaurantLevel: number): number {
-  if (restaurantLevel <= 2) return 3.5;
-  if (restaurantLevel <= 4) return 2;
-  if (restaurantLevel <= 6) return 1;
+  if (restaurantLevel <= 2) return 5;
+  if (restaurantLevel <= 4) return 3;
+  if (restaurantLevel <= 6) return 1.5;
   return 0;
+}
+
+/**
+ * Seconds between new guests. Relaxed by default (about 15 s at the start, 7-10 s later);
+ * better reputation brings guests a little faster and each chef/waiter you hire speeds it up slightly.
+ */
+export function getCustomerSpawnInterval(restaurantLevel: number, reputation: number, helpers: number): number {
+  const base = 11 - reputation * 0.8; // rep 1 → 10.2 s, rep 5 → 7 s
+  const staffBoost = Math.min(helpers, 6) * 0.45;
+  return Math.max(5.5, base - staffBoost) + getEarlySpawnDelay(restaurantLevel);
+}
+
+/** Most orders that can be open at once before new guests wait to come in. */
+export function getMaxOpenOrders(restaurantLevel: number, helpers: number): number {
+  return 2 + Math.floor(restaurantLevel / 6) + helpers;
 }
 
 // ---------------------------------------------------------------------------
