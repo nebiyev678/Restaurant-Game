@@ -8,6 +8,7 @@ import {
   CLOTHING_CATALOG,
   HOUSE_CATALOG,
   RECIPES,
+  RECIPE_LIST,
   STATION_INFO,
   VEHICLE_CATALOG,
   getActiveStations,
@@ -36,6 +37,7 @@ import {
   createHangingIvyShelfMesh,
   createHouseStructure,
   createIngredientShelfMesh,
+  createCoveredMachineMesh,
   createKitchenStationMesh,
   createMenuBoardMesh,
   createPassThroughCounterMesh,
@@ -277,6 +279,8 @@ export class RestaurantWorldEngine {
   /** Installed (active) machines. x/z = where the cook stands; mx/mz = the machine itself. */
   private stations: { type: StationType; x: number; z: number; mx: number; mz: number; ring: THREE.Mesh }[] = [];
   private lastStationsKey = '';
+  /** Covered (not yet unlocked) machines, for their floating "unlocks at" signs. */
+  private lockedStations: { type: StationType; mx: number; mz: number; recipeIds: RecipeId[]; level: number }[] = [];
   private stationPulseTime = 0;
   private registerPos = new THREE.Vector3(-5.5, 0, -4.4);
   private customers: SimCustomer[] = [];
@@ -381,25 +385,6 @@ export class RestaurantWorldEngine {
     } else {
       this.slowWindows = 0;
     }
-  }
-
-  /** A plain kitchen counter standing in for a machine the player hasn't unlocked yet. */
-  private createEmptyCounterMesh(isBar: boolean): THREE.Group {
-    const g = new THREE.Group();
-    const body = new THREE.Mesh(
-      new THREE.BoxGeometry(isBar ? 1.8 : 1.1, 0.9, isBar ? 1.0 : 1.75),
-      new THREE.MeshStandardMaterial({ color: '#cbd5e1', roughness: 0.6 })
-    );
-    body.position.y = 0.45;
-    body.castShadow = true;
-    body.receiveShadow = true;
-    const top = new THREE.Mesh(
-      new THREE.BoxGeometry(isBar ? 1.9 : 1.2, 0.06, isBar ? 1.08 : 1.85),
-      new THREE.MeshStandardMaterial({ color: '#e2e8f0', roughness: 0.35, metalness: 0.2 })
-    );
-    top.position.y = 0.93;
-    g.add(body, top);
-    return g;
   }
 
   /** Opens the cooking window for a machine (from its floating sign). */
@@ -1054,10 +1039,29 @@ export class RestaurantWorldEngine {
     ];
 
     const activeStations = new Set(getActiveStations(this.saveRef.current.unlockedRecipes));
+    const unlockedSet = new Set(this.saveRef.current.unlockedRecipes);
+    this.lockedStations = [];
     stationLayout.forEach((st) => {
       const isActive = activeStations.has(st.type);
-      // Machines not needed yet are plain empty counters (fewer choices for new players)
-      const mesh = isActive ? createKitchenStationMesh(st.type) : this.createEmptyCounterMesh(st.type === 'bar');
+      let mesh: THREE.Group;
+      if (isActive) {
+        mesh = createKitchenStationMesh(st.type);
+      } else {
+        // Machines not unlocked yet arrive covered and strapped, tagged with what they'll cook
+        const upcoming = RECIPE_LIST.filter((r) => r.station === st.type && !unlockedSet.has(r.id)).sort(
+          (a, b) => a.requiredLevel - b.requiredLevel
+        );
+        const first = upcoming[0];
+        const level = first?.requiredLevel ?? 1;
+        mesh = createCoveredMachineMesh(st.type, first?.name ?? STATION_INFO[st.type].short, level);
+        this.lockedStations.push({
+          type: st.type,
+          mx: st.x,
+          mz: st.z,
+          recipeIds: upcoming.slice(0, 3).map((r) => r.id),
+          level,
+        });
+      }
       mesh.position.set(st.x, 0.1, st.z);
       mesh.rotation.y = st.type === 'bar' ? 0 : Math.PI / 2;
       this.restaurantGroup.add(mesh);
@@ -3596,6 +3600,22 @@ export class RestaurantWorldEngine {
           recipeIds,
           pendingCount: this.orders.filter((o) => o.status === 'waiting' && RECIPES[o.recipeId].station === st.type)
             .length,
+        });
+      }
+      for (const ls of this.lockedStations) {
+        const p = this.projectToScreen(ls.mx, 2.0, ls.mz);
+        if (!p.visible) continue;
+        bubbles.push({
+          id: `locked_${ls.type}`,
+          screenX: p.x,
+          screenY: p.y,
+          visible: true,
+          kind: 'station',
+          label: `Lv ${ls.level}`,
+          stationType: ls.type,
+          recipeIds: ls.recipeIds,
+          locked: true,
+          unlockLevel: ls.level,
         });
       }
     }
