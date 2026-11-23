@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ArrowDownToLine,
   Award,
   Building2,
   ChefHat,
@@ -8,6 +9,7 @@ import {
   ChevronUp,
   Clock,
   Coins,
+  Hand,
   Home,
   Lock,
   Flame,
@@ -22,6 +24,7 @@ import {
   Sparkles,
   Star,
   Store,
+  Trash2,
   Users,
   Utensils,
   Vibrate,
@@ -518,6 +521,21 @@ export default function App() {
   staffTaskDoneRef.current = handleStaffTaskDone;
 
   const closeDayReport = useCallback(() => setDayReport(null), []);
+
+  // Wrong dish? Put it on the pass counter (serve later) or throw it away — from anywhere
+  const handlePutDishOnPass = useCallback(() => {
+    const ok = engineRef.current?.putHeldDishOnCounter();
+    haptic(HAPTIC.tap);
+    if (ok) pushPopup('On the pass', 'sky');
+    else showToast('Pass Counter Full', 'Serve or throw away a dish first.');
+  }, [pushPopup, showToast]);
+
+  const handleTrashDish = useCallback(() => {
+    if (engineRef.current?.trashHeldDish()) {
+      haptic(HAPTIC.warning);
+      pushPopup('Dish thrown away', 'rose');
+    }
+  }, [pushPopup]);
 
   const handleClaimOfflineReward = useCallback(() => {
     if (!offlineReward) return;
@@ -1623,9 +1641,23 @@ export default function App() {
             }}
           >
             {!compact && hud.heldRecipe && (
-              <div className="pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-500 text-slate-950 shadow-lg font-bold text-xs">
+              <div className="pointer-events-auto flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-xl bg-amber-500 text-slate-950 shadow-lg font-bold text-xs">
                 <Utensils className="w-4 h-4" />
                 <span>Carrying: {RECIPES[hud.heldRecipe].name}</span>
+                <button
+                  onClick={handlePutDishOnPass}
+                  title="Put on the pass counter (serve later)"
+                  className="ml-1 flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-950/15 hover:bg-slate-950/25 cursor-pointer"
+                >
+                  <ArrowDownToLine className="w-3.5 h-3.5" /> Pass
+                </button>
+                <button
+                  onClick={handleTrashDish}
+                  title="Throw away"
+                  className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-950/15 hover:bg-rose-600 hover:text-white cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
               </div>
             )}
             {!isTouch && <VirtualJoystick onMove={(x, y) => engineRef.current?.setJoystick(x, y)} />}
@@ -1641,11 +1673,25 @@ export default function App() {
               }}
             >
               {hud.heldRecipe && (
-                <div className="flex items-center gap-1.5 rounded-full bg-slate-950/85 border border-amber-500/60 pl-0.5 pr-2.5 py-0.5 shadow-md">
+                <div className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-slate-950/85 border border-amber-500/60 pl-0.5 pr-0.5 py-0.5 shadow-md">
                   <PreviewThumb kind="recipe" id={hud.heldRecipe} alt={RECIPES[hud.heldRecipe].name} className="w-7 h-7 rounded-full" />
-                  <span className="text-[10px] font-bold text-amber-200 max-w-[38vw] truncate">
-                    Carrying {RECIPES[hud.heldRecipe].name}
+                  <span className="text-[10px] font-bold text-amber-200 max-w-[30vw] truncate">
+                    {RECIPES[hud.heldRecipe].name}
                   </span>
+                  <button
+                    onClick={handlePutDishOnPass}
+                    aria-label="Put dish on the pass counter"
+                    className="w-8 h-8 rounded-full bg-slate-800 active:bg-slate-700 text-sky-300 flex items-center justify-center cursor-pointer"
+                  >
+                    <ArrowDownToLine className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={handleTrashDish}
+                    aria-label="Throw dish away"
+                    className="w-8 h-8 rounded-full bg-slate-800 active:bg-slate-700 text-rose-300 flex items-center justify-center cursor-pointer"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               )}
               {hud.nearbyPrompt && (
@@ -1667,6 +1713,9 @@ export default function App() {
                       : t === 'open_supermarket' ? Store
                       : t === 'open_home' ? Home
                       : t === 'open_shop' ? ShoppingBag
+                      : t === 'put_down' ? ArrowDownToLine
+                      : t === 'pick_up' ? Hand
+                      : t === 'trash' ? Trash2
                       : Flame;
                     return (
                       <span className="w-9 h-9 rounded-full bg-slate-950/15 flex items-center justify-center shrink-0">
@@ -1723,7 +1772,13 @@ export default function App() {
                                   ? Home
                                   : t === 'open_shop'
                                     ? ShoppingBag
-                                    : Flame;
+                                    : t === 'put_down'
+                                      ? ArrowDownToLine
+                                      : t === 'pick_up'
+                                        ? Hand
+                                        : t === 'trash'
+                                          ? Trash2
+                                          : Flame;
                   return (
                     <span className="w-10 h-10 rounded-xl bg-slate-950/15 flex items-center justify-center shrink-0">
                       <Icon className="w-6 h-6" />

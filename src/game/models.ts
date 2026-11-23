@@ -4598,3 +4598,43 @@ export function createFloorDrainMesh(): THREE.Group {
   }
   return g;
 }
+
+/** Stainless-steel pedal bin for the kitchen (throw away wrong dishes). */
+export function createKitchenBinMesh(): THREE.Group {
+  const g = new THREE.Group();
+  const steel = new THREE.MeshStandardMaterial({ color: '#c3c7cc', metalness: 0.85, roughness: 0.3 });
+  const darkSteel = new THREE.MeshStandardMaterial({ color: '#6b7280', metalness: 0.7, roughness: 0.4 });
+  const black = new THREE.MeshStandardMaterial({ color: '#1f2937', roughness: 0.6 });
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.21, 0.66, 24), steel);
+  body.position.y = 0.33;
+  body.castShadow = true;
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.232, 0.014, 6, 24), darkSteel);
+  rim.rotation.x = Math.PI / 2;
+  rim.position.y = 0.66;
+  const lid = new THREE.Mesh(new THREE.CylinderGeometry(0.235, 0.235, 0.05, 24), steel);
+  lid.position.y = 0.69;
+  lid.castShadow = true;
+  const hinge = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.04, 0.05), darkSteel);
+  hinge.position.set(0, 0.68, -0.24);
+  const pedal = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.03, 0.12), black);
+  pedal.position.set(0, 0.04, 0.26);
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.215, 0.22, 0.04, 24), black);
+  base.position.y = 0.02;
+  // Little "waste" label
+  const c = document.createElement('canvas');
+  c.width = 64;
+  c.height = 32;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#16a34a';
+  ctx.fillRect(0, 0, 64, 32);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 15px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('WASTE', 32, 22);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const label = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.1), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 }));
+  label.position.set(0, 0.45, 0.226);
+  g.add(body, rim, lid, hinge, pedal, base, label);
+  return g;
+}
