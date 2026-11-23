@@ -20,7 +20,6 @@ import {
   applyPlayerClothes,
   createBistroStringLights,
   createCharacterModel,
-  createCityTreeMesh,
   createCutawayHalfWallSegment,
   createDiningTableMesh,
   createDishMesh,
@@ -42,11 +41,8 @@ import {
   createRangeHoodMesh,
   createRefrigeratorMesh,
   createRegisterStationMesh,
-  createRoadTexture,
   createShopBuildingMesh,
-  createSidewalkTexture,
   createSinkStationMesh,
-  createStreetLampMesh,
   createSubwayTileTexture,
   createTrashBinMesh,
   createTrayStationMesh,
@@ -67,6 +63,13 @@ import {
   StationType,
 } from './types';
 
+import {
+  CAR_TRAVEL_SPOTS,
+  OLD_TOWN,
+  OldTownExterior,
+  createGableRoofMesh,
+  createStreetTerrace,
+} from './oldTown';
 import {
   AvoidanceActor,
   NavWaypoint,
@@ -235,7 +238,7 @@ export class RestaurantWorldEngine {
   private heldDishMesh: THREE.Group | null = null;
 
   private playerCarParts: VehicleParts | null = null;
-  private carPos = new THREE.Vector3(33.5, 0, 4.8);
+  private carPos = new THREE.Vector3(OLD_TOWN.carSpawn.x, 0, OLD_TOWN.carSpawn.z);
   private carVel = new THREE.Vector3();
   private carYaw = -Math.PI / 2;
   private inVehicle = false;
@@ -287,6 +290,10 @@ export class RestaurantWorldEngine {
 
   // Particles
   private particles: SimParticle[] = [];
+
+  // Old-town exterior (streets, fountain, lanterns, trees, skyline)
+  private oldTown = new OldTownExterior();
+  private nightTarget = 0;
 
   constructor(
     container: HTMLElement,
@@ -428,63 +435,36 @@ export class RestaurantWorldEngine {
     ground.receiveShadow = true;
     this.scene.add(ground);
 
-    // City Paved District Base with architectural paver tiles
-    const plaza = new THREE.Mesh(
-      new THREE.BoxGeometry(72, 0.05, 42),
-      new THREE.MeshStandardMaterial({ map: createSidewalkTexture(maxAniso), roughness: 0.85 })
-    );
-    plaza.position.set(14, -0.015, 0);
-    plaza.receiveShadow = true;
-    this.scene.add(plaza);
-
-    // Crosswalk zebra stripes near restaurant entrance
-    const stripeMat = new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.7 });
-    for (let s = -2.2; s <= 2.2; s += 0.9) {
-      const stripe = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.42), stripeMat);
-      stripe.rotation.x = -Math.PI / 2;
-      stripe.position.set(6.2, 0.032, s);
-      this.scene.add(stripe);
-    }
-
-    // Main East-West Avenue Road (z = 0, running from x = 3.5 to x = 46)
-    const roadTex = createRoadTexture(maxAniso);
-    const roadEW = new THREE.Mesh(
-      new THREE.PlaneGeometry(6.4, 48),
-      new THREE.MeshStandardMaterial({ map: roadTex, roughness: 0.85 })
-    );
-    roadEW.rotation.x = -Math.PI / 2;
-    roadEW.rotation.z = Math.PI / 2;
-    roadEW.position.set(22, 0.02, 0);
-    roadEW.receiveShadow = true;
-    this.scene.add(roadEW);
-
-    // North-South Cross Avenue at x = 18
-    const roadNS = new THREE.Mesh(
-      new THREE.PlaneGeometry(5.6, 36),
-      new THREE.MeshStandardMaterial({ map: roadTex, roughness: 0.85 })
-    );
-    roadNS.rotation.x = -Math.PI / 2;
-    roadNS.position.set(17.5, 0.025, 0);
-    roadNS.receiveShadow = true;
-    this.scene.add(roadNS);
+    // Cozy old-town streets: sandstone sidewalks, fan-cobbled piazza, granite-sett roads,
+    // fountain roundabout, lanterns, plane trees, benches, planters, bollards & skyline
+    const town = this.oldTown.build(maxAniso);
+    this.scene.add(this.oldTown.group);
+    this.staticColliders.push(...town.colliders);
+    this.streetLampBulbs.push(...town.lanternMats);
 
     // City Buildings
     const shops: {
       zoneId: 'clothing' | 'dealership' | 'supermarket' | 'bank';
       name: string;
       color: string;
+      wall: string;
+      roof: string;
       x: number;
       z: number;
       rotY: number;
     }[] = [
-      { zoneId: 'clothing', name: 'Style Atelier', color: '#ec4899', x: 10.5, z: -13.5, rotY: 0 },
-      { zoneId: 'dealership', name: 'Apex Motors', color: '#3b82f6', x: 24.5, z: -13.5, rotY: 0 },
-      { zoneId: 'supermarket', name: 'Fresh Market', color: '#10b981', x: 10.5, z: 14.5, rotY: Math.PI },
-      { zoneId: 'bank', name: 'Metro Bank', color: '#eab308', x: 24.5, z: 14.5, rotY: Math.PI },
+      { zoneId: 'clothing', name: 'Style Atelier', color: '#be185d', wall: '#f4dccf', roof: '#a8492a', x: 10.5, z: -13.5, rotY: 0 },
+      { zoneId: 'dealership', name: 'Apex Motors', color: '#1d4ed8', wall: '#e9e0cc', roof: '#5b5f66', x: 24.5, z: -13.5, rotY: 0 },
+      { zoneId: 'supermarket', name: 'Fresh Market', color: '#15803d', wall: '#f6e7c1', roof: '#b4532a', x: 10.5, z: 14.5, rotY: Math.PI },
+      { zoneId: 'bank', name: 'Metro Bank', color: '#a16207', wall: '#e4d8c4', roof: '#7c3a26', x: 24.5, z: 14.5, rotY: Math.PI },
     ];
 
     shops.forEach((s) => {
-      const building = createShopBuildingMesh(s.name, s.color);
+      const building = createShopBuildingMesh(s.name, s.color, s.wall);
+      // Old-town pitched terracotta roof on top of the cornice
+      const roof = createGableRoofMesh(7.3, 5.7, 1.7, s.roof);
+      roof.position.y = 3.46;
+      building.add(roof);
       building.position.set(s.x, 0, s.z);
       building.rotation.y = s.rotY;
       this.scene.add(building);
@@ -514,57 +494,6 @@ export class RestaurantWorldEngine {
       this.scene.add(pad);
       this.clickables.push(pad);
     });
-
-    // Trees & Streetlamps along boulevard
-    const treePositions: [number, number][] = [
-      [-17, -14],
-      [-17, 14],
-      [4.5, -13],
-      [4.5, 13],
-      [31, -13],
-      [31, 13],
-      [46, -12],
-      [46, 12],
-      [32, -6],
-    ];
-    treePositions.forEach(([tx, tz]) => {
-      const tree = createCityTreeMesh();
-      tree.position.set(tx, 0, tz);
-      this.scene.add(tree);
-      this.staticColliders.push({ kind: 'circle', x: tx, z: tz, r: 0.42 });
-    });
-
-    const lampPositions: [number, number, number][] = [
-      [5, -4.2, 0],
-      [14, -4.2, 0],
-      [22, -4.2, 0],
-      [30, -4.2, 0],
-      [5, 4.2, Math.PI],
-      [22, 4.2, Math.PI],
-    ];
-    lampPositions.forEach(([lx, lz, rot]) => {
-      const lamp = createStreetLampMesh();
-      lamp.group.position.set(lx, 0, lz);
-      lamp.group.rotation.y = rot;
-      this.scene.add(lamp.group);
-      this.streetLampBulbs.push(lamp.bulbMat);
-      this.staticColliders.push({ kind: 'circle', x: lx, z: lz, r: 0.24 });
-    });
-
-    // Distant skyline silhouettes for horizon depth
-    const skyColors = ['#94a3b8', '#cbd5e1', '#64748b'];
-    for (let i = 0; i < 14; i++) {
-      const bw = 4 + (i % 3) * 2.5;
-      const bh = 8 + ((i * 7) % 14);
-      const bx = -26 + i * 6.5;
-      const bz = -32 - (i % 2) * 5;
-      const block = new THREE.Mesh(
-        new THREE.BoxGeometry(bw, bh, bw),
-        new THREE.MeshStandardMaterial({ color: skyColors[i % 3], roughness: 0.85 })
-      );
-      block.position.set(bx, bh / 2, bz);
-      this.scene.add(block);
-    }
 
     // Dealership Showroom Plinth + Display Car
     const plinth = new THREE.Mesh(
@@ -919,6 +848,39 @@ export class RestaurantWorldEngine {
           z: side * (1.72 - distAlongDoor * Math.cos(1.38)),
           r: 0.16,
         });
+      }
+    }
+
+    // Old-town street terraces either side of the entrance (theme-coloured umbrellas & cushions)
+    for (const side of [1, -1] as const) {
+      const terrace = createStreetTerrace(
+        side,
+        {
+          umbrellaColor: activeTheme.trimColor,
+          cushionColor: activeTheme.cushionColor,
+          woodColor: activeTheme.woodPrimary,
+        },
+        side === 1
+      );
+      terrace.group.position.set(maxX, 0, 0);
+      this.restaurantGroup.add(terrace.group);
+      for (const c of terrace.colliders) {
+        this.restaurantColliders.push(
+          c.kind === 'circle'
+            ? { ...c, x: c.x + maxX }
+            : { ...c, minX: c.minX + maxX, maxX: c.maxX + maxX }
+        );
+      }
+      // String lights strung between the terrace corner posts
+      for (const zEdge of [3.7 * side, 6.9 * side]) {
+        const strand = createBistroStringLights(
+          new THREE.Vector3(maxX + 0.6, 2.55, zEdge),
+          new THREE.Vector3(maxX + 5.2, 2.55, zEdge),
+          5,
+          activeTheme.lightColor,
+          activeTheme.lightColor
+        );
+        this.restaurantGroup.add(strand.group);
       }
     }
 
@@ -1604,10 +1566,9 @@ export class RestaurantWorldEngine {
     this.tapWalkTarget = null;
     this.tapWaypoints = [];
     if (this.inVehicle && this.playerCarParts) {
-      const minCarX = Math.max(this.restaurantBounds.maxX + 1.8, 4.5);
-      const carZ = zoneId === 'home' ? 0 : Math.min(Math.max(z.z, -3), 3);
-      const carX = Math.max(minCarX, zoneId === 'home' ? 33.5 : z.x);
-      this.carPos.set(carX, 0, carZ);
+      // Cars arrive on a road or open paving (the piazza is pedestrian-only behind bollards)
+      const spot = CAR_TRAVEL_SPOTS[zoneId] ?? { x: z.x, z: Math.min(Math.max(z.z, -3), 3) };
+      this.carPos.set(spot.x, 0, spot.z);
       this.resolveWorldCollision(this.carPos, 1.05, false, false);
       this.playerCarParts.group.position.copy(this.carPos);
       this.playerPos.copy(this.carPos);
@@ -2082,6 +2043,9 @@ export class RestaurantWorldEngine {
     }
     this.lastTimeOfDay = save.timeOfDay;
 
+    // Fountain water + lantern light pools + lit skyline windows (runs on title screen too)
+    this.oldTown.update(dt, this.nightTarget);
+
     // Title screen smooth orbiting showcase
     if (this.titleMode) {
       this.camAzimuth += dt * 0.16;
@@ -2152,6 +2116,7 @@ export class RestaurantWorldEngine {
     this.hemiLight.intensity = 0.38 + daylight * 0.38;
 
     const lampGlow = nightFactor > 0 || sunsetFactor > 0.3 ? 1.4 : 0.25;
+    this.nightTarget = nightFactor > 0 ? 1 : sunsetFactor > 0.3 ? 0.6 : 0;
     for (const mat of this.streetLampBulbs) {
       mat.emissiveIntensity = lampGlow;
     }
