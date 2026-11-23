@@ -341,6 +341,10 @@ export interface SaveState {
   today: DayStats;
   /** Epoch ms of the last auto-save; used to compute offline franchise earnings. */
   lastSeenAt: number | null;
+  /** 'auto' picks a level from the device and steps down if the frame rate drops. */
+  graphicsQuality: 'auto' | 'low' | 'medium' | 'high';
+  /** Vibration feedback on supported (Android) devices. */
+  hapticsEnabled: boolean;
 }
 
 export interface ProjectedBubble {

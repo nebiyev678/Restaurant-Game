@@ -22,6 +22,9 @@ import {
   ArrowRightLeft,
 } from 'lucide-react';
 import { PWAInstallButton } from './PWAInstallButton';
+import { CarShowroom } from './CarShowroom';
+import { LiveModelViewer, PreviewThumb } from './ItemPreview';
+import { buildDressedChef, buildHomePreview } from '../game/previewModels';
 import {
   ACHIEVEMENTS,
   CAFE_THEMES,
@@ -83,6 +86,8 @@ interface ManagementDrawersProps {
   onToggleMute: () => void;
   onToggleMusicMute: () => void;
   onSaveNow: () => void;
+  onSetGraphicsQuality: (q: SaveState['graphicsQuality']) => void;
+  onToggleHaptics: () => void;
   onResetSave: () => void;
   onAdvanceTimeOfDay: () => void;
 }
@@ -114,12 +119,18 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
   onToggleMute,
   onToggleMusicMute,
   onSaveNow,
+  onSetGraphicsQuality,
+  onToggleHaptics,
   onResetSave,
   onAdvanceTimeOfDay,
 }) => {
   const [restaurantSub, setRestaurantSub] = useState<'equipment' | 'themes'>('equipment');
   const [lifestyleSub, setLifestyleSub] = useState<'clothing' | 'cars' | 'housing'>('clothing');
   const [citySub, setCitySub] = useState<'travel' | 'bank' | 'market' | 'franchises'>('travel');
+  // Wardrobe try-on (tap a thumbnail to see it on your chef before buying)
+  const [tryOn, setTryOn] = useState<{ outfit: string; hat: string; watch: string } | null>(null);
+  // Housing showroom: which property is shown in the live 3D viewer
+  const [previewHouseId, setPreviewHouseId] = useState<string | null>(null);
   const [kitchenSub, setKitchenSub] = useState<'all' | 'classic' | 'specialty' | 'desserts' | 'beverages'>('all');
 
   useEffect(() => {
@@ -300,6 +311,7 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                           className="rounded-xl bg-slate-900 border border-slate-800 p-3.5 flex flex-col justify-between gap-3"
                         >
                           <div>
+                            <PreviewThumb kind="equipment" id={eqId} alt={def.name} className="h-28 w-full mb-2.5" />
                             <div className="flex items-center justify-between gap-2 mb-1">
                               <span className="font-semibold text-sm text-white">{def.name}</span>
                               <span className="font-mono-num text-xs text-amber-400">
@@ -368,6 +380,13 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                           }`}
                         >
                           <div>
+                            <PreviewThumb
+                              kind="theme"
+                              id={theme.id}
+                              alt={`${theme.name} interior`}
+                              locked={!owned && !levelMet}
+                              className="h-36 w-full mb-2.5"
+                            />
                             <div className="flex items-start justify-between gap-2 mb-1.5">
                               <div>
                                 <div className="flex items-center gap-1.5">
@@ -521,6 +540,18 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                           }`}
                         >
                           <div>
+                            <div className="flex gap-1.5 mb-2.5">
+                              {lineRecipes.map((lr) => (
+                                <PreviewThumb
+                                  key={lr.id}
+                                  kind="recipe"
+                                  id={lr.id}
+                                  alt={lr.name}
+                                  locked={!unlocked}
+                                  className="h-20 flex-1"
+                                />
+                              ))}
+                            </div>
                             <div className="flex items-center justify-between gap-2 mb-1">
                               <span className="font-semibold text-sm text-white flex items-center gap-1.5">
                                 {isDesserts ? (
@@ -608,6 +639,13 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                       }`}
                     >
                       <div>
+                        <PreviewThumb
+                          kind="recipe"
+                          id={r.id}
+                          alt={r.name}
+                          locked={!unlocked && !canUnlock}
+                          className="h-28 w-full mb-2.5"
+                        />
                         <div className="flex items-center justify-between gap-2 mb-1">
                           <div className="flex items-center gap-1.5 min-w-0">
                             <span className="font-semibold text-sm text-white truncate">
@@ -698,6 +736,7 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                           key={s.id}
                           className="rounded-xl bg-slate-900 border border-slate-800 p-3 flex items-center justify-between gap-3"
                         >
+                          <PreviewThumb kind="staff" id={s.role} alt={s.name} className="w-14 h-16 shrink-0" />
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-bold text-white">{s.name}</p>
                             <p className="text-xs text-slate-400 font-mono-num">
@@ -754,6 +793,13 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                         className="rounded-xl bg-slate-900 border border-slate-800 p-3.5 flex flex-col justify-between gap-3"
                       >
                         <div>
+                          <PreviewThumb
+                            kind="staff"
+                            id={st.role}
+                            alt={st.title}
+                            locked={!levelMet}
+                            className="h-32 w-full mb-2.5"
+                          />
                           <div className="flex items-center justify-between gap-2 mb-1">
                             <span className="font-semibold text-sm text-white">{st.title}</span>
                             <span className="text-xs font-mono-num text-slate-400">
@@ -820,7 +866,8 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                       }}
                       className="text-left rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-amber-500/60 p-3.5 flex items-center justify-between gap-3 cursor-pointer transition-colors"
                     >
-                      <div>
+                      <PreviewThumb kind="zone" id={z.id} alt={z.name} className="w-20 h-16 shrink-0" />
+                      <div className="flex-1 min-w-0">
                         <p className="font-semibold text-sm text-white">{z.name}</p>
                         <p className="text-xs text-slate-400">{z.subtitle}</p>
                       </div>
@@ -906,7 +953,14 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                         key={fr.id}
                         className="rounded-xl bg-slate-900 border border-slate-800 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                       >
-                        <div>
+                        <PreviewThumb
+                          kind="franchise"
+                          id={fr.id}
+                          alt={fr.name}
+                          locked={!owned && !lvlOk}
+                          className="h-28 w-full sm:w-36 shrink-0"
+                        />
+                        <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-0.5">
                             <Building2 className="w-4 h-4 text-amber-400" />
                             <span className="font-bold text-sm text-white">{fr.name}</span>
@@ -975,6 +1029,38 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                 </p>
               )}
 
+              {lifestyleSub === 'clothing' && (() => {
+                const look = tryOn ?? {
+                  outfit: save.equippedOutfitId,
+                  hat: save.equippedHatId,
+                  watch: save.equippedWatchId,
+                };
+                const changed =
+                  look.outfit !== save.equippedOutfitId ||
+                  look.hat !== save.equippedHatId ||
+                  look.watch !== save.equippedWatchId;
+                return (
+                  <LiveModelViewer
+                    modelKey={`${look.outfit}|${look.hat}|${look.watch}`}
+                    build={() => buildDressedChef(look.outfit, look.hat, look.watch)}
+                    shot={{ yaw: 0.35, pitch: 0.1, padding: 0.86 }}
+                    className="h-64 sm:h-72 rounded-2xl border border-slate-800"
+                  >
+                    <div className="pointer-events-none absolute top-3 left-3 rounded-md bg-slate-950/75 px-2 py-1 text-[11px] font-bold text-slate-200">
+                      {changed ? 'Trying on' : 'Your current look'}
+                    </div>
+                    {changed && (
+                      <button
+                        onClick={() => setTryOn(null)}
+                        className="absolute top-3 right-3 rounded-md bg-slate-950/80 hover:bg-slate-800 border border-slate-700 px-2.5 py-1 text-[11px] font-bold text-white cursor-pointer"
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </LiveModelViewer>
+                );
+              })()}
+
               {lifestyleSub === 'clothing' && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {CLOTHING_CATALOG.map((item) => {
@@ -991,6 +1077,28 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                         className="rounded-xl bg-slate-900 border border-slate-800 p-3.5 flex flex-col justify-between gap-3"
                       >
                         <div>
+                          <button
+                            onClick={() => {
+                              const base = tryOn ?? {
+                                outfit: save.equippedOutfitId,
+                                hat: save.equippedHatId,
+                                watch: save.equippedWatchId,
+                              };
+                              setTryOn({ ...base, [item.slot]: item.id });
+                            }}
+                            className="block w-full mb-2.5 cursor-pointer group"
+                            aria-label={`Try on ${item.name}`}
+                          >
+                            <PreviewThumb
+                              kind="clothing"
+                              id={item.id}
+                              alt={item.name}
+                              className="h-32 w-full ring-0 group-hover:ring-2 ring-amber-400/70 transition"
+                            />
+                            <span className="mt-1 block text-[10px] font-semibold text-amber-300/90">
+                              Tap to try on
+                            </span>
+                          </button>
                           <div className="flex items-center justify-between gap-2 mb-1">
                             <span className="font-semibold text-sm text-white">{item.name}</span>
                             <span className="text-[11px] uppercase tracking-wider text-slate-400">
@@ -1028,77 +1136,34 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
               )}
 
               {lifestyleSub === 'cars' && (
-                <div className="space-y-3">
-                  {save.activeVehicleId && (
-                    <div className="rounded-xl bg-slate-900 border border-sky-700/50 p-3.5 flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-bold text-white">Active Vehicle Ready</p>
-                        <p className="text-xs text-slate-400">
-                          {inVehicle
-                            ? 'Currently driving around the city avenue.'
-                            : 'Parked outside on the city road.'}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => {
-                          onToggleDrive();
-                          onClose();
-                        }}
-                        className="px-4 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 text-xs font-bold cursor-pointer whitespace-nowrap shrink-0"
-                      >
-                        {inVehicle ? 'Park & Exit' : 'Hop In & Drive'}
-                      </button>
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {VEHICLE_CATALOG.map((car) => {
-                      const owned = save.ownedVehicles.includes(car.id);
-                      const active = save.activeVehicleId === car.id;
-                      const canBuy = !owned && save.personalWallet >= car.price;
-                      return (
-                        <div
-                          key={car.id}
-                          className="rounded-xl bg-slate-900 border border-slate-800 p-3.5 flex flex-col justify-between gap-3"
-                        >
-                          <div>
-                            <div className="flex items-center justify-between gap-2 mb-1">
-                              <span className="font-semibold text-sm text-white">{car.name}</span>
-                              <span className="text-xs text-slate-400">{car.category}</span>
-                            </div>
-                            <p className="text-xs text-slate-400 mb-1.5">{car.description}</p>
-                            <p className="text-xs font-mono-num text-sky-400">
-                              Top Speed: {Math.round(car.speed * 7)} km/h
-                            </p>
-                          </div>
-                          <button
-                            disabled={!owned && !canBuy}
-                            onClick={() => onBuyOrSelectVehicle(car.id)}
-                            className={`w-full py-2 px-3 rounded-lg text-xs font-bold cursor-pointer ${
-                              active
-                                ? 'bg-emerald-950/60 border border-emerald-600/50 text-emerald-300'
-                                : owned
-                                  ? 'bg-sky-500 hover:bg-sky-400 text-slate-950'
-                                  : canBuy
-                                    ? 'bg-amber-500 hover:bg-amber-400 text-slate-950'
-                                    : 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                            }`}
-                          >
-                            {active
-                              ? 'Selected in Driveway'
-                              : owned
-                                ? 'Park in Driveway'
-                                : `Purchase · $${car.price.toLocaleString()}`}
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
+                <CarShowroom
+                  save={save}
+                  inVehicle={inVehicle}
+                  onBuyOrSelectVehicle={onBuyOrSelectVehicle}
+                  onToggleDrive={onToggleDrive}
+                  onClose={onClose}
+                />
               )}
 
               {lifestyleSub === 'housing' && (
                 <div className="space-y-4">
+                  {(() => {
+                    const shownId = previewHouseId ?? save.activeHouseId;
+                    const shown = HOUSE_CATALOG.find((h) => h.id === shownId) ?? HOUSE_CATALOG[0];
+                    const isHome = shown.id === save.activeHouseId;
+                    return (
+                      <LiveModelViewer
+                        modelKey={`${shown.id}|${save.ownedFurniture.slice().sort().join(',')}`}
+                        build={() => buildHomePreview(shown.id, save.ownedFurniture)}
+                        shot={{ yaw: 0.6, pitch: 0.62, padding: 0.84 }}
+                        className="h-60 sm:h-72 rounded-2xl border border-slate-800"
+                      >
+                        <div className="pointer-events-none absolute top-3 left-3 rounded-md bg-slate-950/75 px-2 py-1 text-[11px] font-bold text-slate-200">
+                          {shown.name} · {isHome ? 'Your home' : 'Viewing'}
+                        </div>
+                      </LiveModelViewer>
+                    );
+                  })()}
                   <div>
                     <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
                       Properties (Live 3D Interior at Residence)
@@ -1114,6 +1179,18 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                             className="rounded-xl bg-slate-900 border border-slate-800 p-3.5 flex flex-col justify-between gap-3"
                           >
                             <div>
+                              <button
+                                onClick={() => setPreviewHouseId(h.id)}
+                                className="block w-full mb-2.5 cursor-pointer group"
+                                aria-label={`View ${h.name} in 3D`}
+                              >
+                                <PreviewThumb
+                                  kind="house"
+                                  id={h.id}
+                                  alt={h.name}
+                                  className="h-32 w-full group-hover:ring-2 ring-amber-400/70 transition"
+                                />
+                              </button>
                               <div className="flex items-center justify-between mb-1">
                                 <span className="font-semibold text-sm text-white">{h.name}</span>
                                 <span className="text-xs font-mono-num text-amber-400">
@@ -1160,7 +1237,8 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                             key={f.id}
                             className="rounded-xl bg-slate-900 border border-slate-800 p-3.5 flex items-center justify-between gap-3"
                           >
-                            <div>
+                            <PreviewThumb kind="furniture" id={f.id} alt={f.name} className="w-20 h-20 shrink-0" />
+                            <div className="flex-1 min-w-0">
                               <p className="font-semibold text-sm text-white">{f.name}</p>
                               <p className="text-xs text-slate-400">{f.description}</p>
                             </div>
@@ -1307,6 +1385,48 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                 >
                   <Music className={`w-4 h-4 ${save.isMusicMuted ? 'text-slate-500' : 'text-amber-400'}`} />
                   {save.isMusicMuted ? 'Muted' : 'Playing'}
+                </button>
+              </div>
+
+              <div className="rounded-xl bg-slate-900 border border-slate-800 p-4 space-y-3">
+                <div>
+                  <p className="font-semibold text-sm text-white">Graphics Quality</p>
+                  <p className="text-xs text-slate-400">
+                    Lower settings run smoother and save battery on phones. Auto adjusts itself if the game slows down.
+                  </p>
+                </div>
+                <div className="grid grid-cols-4 gap-1.5 p-1 rounded-xl bg-slate-950 border border-slate-800">
+                  {(['auto', 'low', 'medium', 'high'] as const).map((q) => {
+                    const active = (save.graphicsQuality ?? 'auto') === q;
+                    return (
+                      <button
+                        key={q}
+                        onClick={() => onSetGraphicsQuality(q)}
+                        aria-pressed={active}
+                        className={`min-h-[44px] rounded-lg text-xs font-bold capitalize cursor-pointer transition-colors ${
+                          active ? 'bg-amber-500 text-slate-950' : 'text-slate-300 hover:text-white'
+                        }`}
+                      >
+                        {q}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="rounded-xl bg-slate-900 border border-slate-800 p-4 flex items-center justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-sm text-white">Vibration</p>
+                  <p className="text-xs text-slate-400">Feel taps, perfect cooks, served orders and level-ups (Android)</p>
+                </div>
+                <button
+                  onClick={onToggleHaptics}
+                  aria-pressed={save.hapticsEnabled ?? true}
+                  className={`min-w-[72px] min-h-[44px] px-4 rounded-lg text-xs font-bold cursor-pointer ${
+                    save.hapticsEnabled ?? true ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 text-slate-400'
+                  }`}
+                >
+                  {save.hapticsEnabled ?? true ? 'On' : 'Off'}
                 </button>
               </div>
 

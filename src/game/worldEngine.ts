@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { sound } from './audio';
+import { QUALITY_PRESETS, ResolvedQuality } from './mobile';
 import {
   CAFE_THEMES,
   CITY_ZONES,
@@ -295,6 +296,14 @@ export class RestaurantWorldEngine {
   private oldTown = new OldTownExterior();
   private nightTarget = 0;
 
+  // Graphics quality (mobile performance)
+  private quality: ResolvedQuality = 'high';
+  private autoQuality = false;
+  private pixelRatioCap = 2;
+  private fpsAccum = 0;
+  private fpsFrames = 0;
+  private slowWindows = 0;
+
   constructor(
     container: HTMLElement,
     saveRef: { current: SaveState },
@@ -308,6 +317,69 @@ export class RestaurantWorldEngine {
     this.syncDynamicWorld(true);
     this.bindEvents();
     this.startLoop();
+  }
+
+  /** Portrait phones get a wider field of view so the restaurant still fits on screen. */
+  private fovForAspect(aspect: number): number {
+    if (aspect < 0.6) return 62;
+    if (aspect < 0.85) return 54;
+    return 42;
+  }
+
+  private currentPixelRatio(): number {
+    return this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, this.pixelRatioCap);
+  }
+
+  /**
+   * Applies a graphics preset. `auto` lets the engine step quality down by itself
+   * if the frame rate stays low (it never steps back up on its own).
+   */
+  public setGraphicsQuality(quality: ResolvedQuality, auto: boolean) {
+    this.quality = quality;
+    this.autoQuality = auto;
+    this.slowWindows = 0;
+    const preset = QUALITY_PRESETS[quality];
+    this.pixelRatioCap = preset.pixelRatioCap;
+    this.renderer.setPixelRatio(this.currentPixelRatio());
+    const shadows = preset.shadows && !this.isSoftwareGl;
+    this.renderer.shadowMap.enabled = shadows;
+    this.renderer.shadowMap.type = preset.softShadows ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
+    this.sunLight.castShadow = shadows;
+    if (this.sunLight.shadow.mapSize.x !== preset.shadowMapSize) {
+      this.sunLight.shadow.mapSize.set(preset.shadowMapSize, preset.shadowMapSize);
+      this.sunLight.shadow.map?.dispose();
+      this.sunLight.shadow.map = null;
+    }
+    this.renderer.shadowMap.needsUpdate = true;
+  }
+
+  public getGraphicsQuality(): ResolvedQuality {
+    return this.quality;
+  }
+
+  /** Frame-rate watchdog for 'auto' quality: two slow 4-second windows → one level down. */
+  private trackFrameRate(rawDt: number) {
+    if (!this.autoQuality || this.paused || this.titleMode || this.quality === 'low') return;
+    this.fpsAccum += rawDt;
+    this.fpsFrames++;
+    if (this.fpsAccum < 4) return;
+    const fps = this.fpsFrames / this.fpsAccum;
+    this.fpsAccum = 0;
+    this.fpsFrames = 0;
+    if (fps < 38) {
+      this.slowWindows++;
+      if (this.slowWindows >= 2) {
+        this.setGraphicsQuality(this.quality === 'high' ? 'medium' : 'low', true);
+      }
+    } else {
+      this.slowWindows = 0;
+    }
+  }
+
+  /** Tap at a screen point (used by the touch-controls overlay to forward short taps). */
+  public tapAt(clientX: number, clientY: number) {
+    if (this.titleMode || this.paused) return;
+    this.handleCanvasTap(clientX, clientY);
   }
 
   private detectSoftwareWebGL(): boolean {
@@ -329,7 +401,7 @@ export class RestaurantWorldEngine {
     this.scene.background = new THREE.Color('#bae6fd');
     this.scene.fog = new THREE.Fog('#bae6fd', 42, 105);
 
-    this.camera = new THREE.PerspectiveCamera(42, width / height, 0.5, 160);
+    this.camera = new THREE.PerspectiveCamera(this.fovForAspect(width / height), width / height, 0.5, 160);
     this.camera.position.set(10, 14, 14);
 
     this.renderer = new THREE.WebGLRenderer({
@@ -1439,11 +1511,10 @@ export class RestaurantWorldEngine {
       const w = this.container.clientWidth || window.innerWidth;
       const h = this.container.clientHeight || window.innerHeight;
       this.camera.aspect = w / h;
+      this.camera.fov = this.fovForAspect(w / h);
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(w, h);
-      this.renderer.setPixelRatio(
-        this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2)
-      );
+      this.renderer.setPixelRatio(this.currentPixelRatio());
     };
 
     window.addEventListener('keydown', onKeyDown);
@@ -1993,6 +2064,7 @@ export class RestaurantWorldEngine {
       if (this.disposed) return;
       const rawDt = this.clock.getDelta();
       const dt = Math.min(rawDt, 0.05);
+      this.trackFrameRate(rawDt);
 
       this.updateSimulation(dt);
       this.renderer.render(this.scene, this.camera);

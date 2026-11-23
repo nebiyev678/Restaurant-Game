@@ -4,9 +4,11 @@ import {
   Building2,
   ChefHat,
   ChevronDown,
+  Car,
   ChevronUp,
   Clock,
   Coins,
+  Home,
   Flame,
   MapPin,
   Music,
@@ -21,6 +23,7 @@ import {
   Store,
   Users,
   Utensils,
+  Vibrate,
   Volume2,
   VolumeX,
   Wallet,
@@ -30,6 +33,7 @@ import {
 import { CookingMiniGame } from './components/CookingMiniGame';
 import { DailyBonusModal } from './components/DailyBonusModal';
 import { DayReportCard } from './components/DayReportCard';
+import { FloatingJoystick } from './components/FloatingJoystick';
 import { ManagementDrawers } from './components/ManagementDrawers';
 import { TitleScreen } from './components/TitleScreen';
 import { VirtualJoystick } from './components/VirtualJoystick';
@@ -81,6 +85,7 @@ import {
   StationType,
 } from './game/types';
 import { RestaurantWorldEngine } from './game/worldEngine';
+import { HAPTIC, haptic, isTouchDevice, resolveQuality, setHapticsEnabled } from './game/mobile';
 import { useOnlineStatus } from './hooks/usePWAInstall';
 
 const STORAGE_KEY = 'restaurant_empire_save_v1';
@@ -121,6 +126,11 @@ function loadSavedState(): { state: SaveState; hasExisting: boolean } {
         dailyLogin: { ...base.dailyLogin, ...(parsed.dailyLogin ?? {}) },
         today: { ...base.today, ...(parsed.today ?? {}) },
         lastSeenAt: typeof parsed.lastSeenAt === 'number' ? parsed.lastSeenAt : null,
+        graphicsQuality: ['auto', 'low', 'medium', 'high'].includes(parsed.graphicsQuality as string)
+          ? (parsed.graphicsQuality as SaveState['graphicsQuality'])
+          : base.graphicsQuality,
+        hapticsEnabled:
+          typeof parsed.hapticsEnabled === 'boolean' ? parsed.hapticsEnabled : base.hapticsEnabled,
         staff: Array.isArray(parsed.staff)
           ? parsed.staff.map((m) => ({ ...m, xp: typeof m.xp === 'number' ? m.xp : 0 }))
           : base.staff,
@@ -146,6 +156,8 @@ export default function App() {
   const [todayKey, setTodayKey] = useState(() => getLocalDateKey());
   const autoPromptedDateRef = useRef<string | null>(null);
   const isOnline = useOnlineStatus();
+  // Phones/tablets get the floating joystick and a decluttered HUD
+  const [isTouch] = useState(() => isTouchDevice());
 
   const [cookModal, setCookModal] = useState<{
     station: StationType;
@@ -243,6 +255,7 @@ export default function App() {
       onHudUpdate: (snapshot) => setHud(snapshot),
       onOrderServed: (recipeId, revenue, tip, repDelta, xpGain) => {
         const total = revenue + tip;
+        haptic(HAPTIC.success);
         pushPopup(`+$${revenue}${tip > 0 ? ` (+$${tip} tip)` : ''}`, 'emerald');
         commitSave((prev) => {
           let nextXp = prev.xp + xpGain;
@@ -255,6 +268,7 @@ export default function App() {
           }
           if (leveledUp) {
             sound.playLevelUp();
+            haptic(HAPTIC.levelUp);
             const tier = getRestaurantTier(nextLevel);
             showToast(`Restaurant Level ${nextLevel}!`, `${tier.title} · ${tier.tableCount} Tables`);
           }
@@ -283,6 +297,7 @@ export default function App() {
       },
       onOrderFailed: (repDelta) => {
         pushPopup('Customer Left!', 'rose');
+        haptic(HAPTIC.warning);
         commitSave((prev) => ({
           ...prev,
           reputation: Math.max(1.0, prev.reputation + repDelta),
@@ -347,6 +362,23 @@ export default function App() {
     save.ownedFurniture,
     staffSyncKey,
   ]);
+
+  // Graphics quality (Settings → Graphics); 'auto' also lets the engine step down if FPS drops
+  useEffect(() => {
+    const q = save.graphicsQuality ?? 'auto';
+    engineRef.current?.setGraphicsQuality(resolveQuality(q), q === 'auto');
+  }, [save.graphicsQuality]);
+
+  useEffect(() => {
+    setHapticsEnabled(save.hapticsEnabled ?? true);
+  }, [save.hapticsEnabled]);
+
+  // Block long-press context menus / callouts that break touch gameplay
+  useEffect(() => {
+    const prevent = (e: Event) => e.preventDefault();
+    window.addEventListener('contextmenu', prevent);
+    return () => window.removeEventListener('contextmenu', prevent);
+  }, []);
 
   // --- Day cycle: midnight closes the books, pays staff, and starts a new day ---
   const handleDayEnded = useCallback(() => {
@@ -526,26 +558,49 @@ export default function App() {
     };
   }, []);
 
-  // Escape key pause / close drawers
+  // Back action shared by Escape and the Android back button: close the top-most
+  // overlay first, otherwise toggle pause (never drops the player out of the game).
+  const handleBack = useCallback(() => {
+    if (offlineReward) return; // must be collected
+    if (showDailyModal) setShowDailyModal(false);
+    else if (cookModal) setCookModal(null);
+    else if (drawerTab !== 'none') setDrawerTab('none');
+    else if (screen === 'playing') setScreen('paused');
+    else if (screen === 'paused') setScreen('playing');
+  }, [offlineReward, showDailyModal, cookModal, drawerTab, screen]);
+  const handleBackRef = useRef(handleBack);
+  handleBackRef.current = handleBack;
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.code === 'Escape') {
-        if (showDailyModal) {
-          setShowDailyModal(false);
-        } else if (cookModal) {
-          setCookModal(null);
-        } else if (drawerTab !== 'none') {
-          setDrawerTab('none');
-        } else if (screen === 'playing') {
-          setScreen('paused');
-        } else if (screen === 'paused') {
-          setScreen('playing');
-        }
-      }
+      if (e.code === 'Escape') handleBackRef.current();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [screen, drawerTab, cookModal, showDailyModal]);
+  }, []);
+
+  // Android back button (Capacitor & PWA): while in a game we keep one guard entry in
+  // history, so "back" closes menus / pauses instead of exiting the app.
+  const inGame = screen !== 'title';
+  useEffect(() => {
+    if (!inGame) return;
+    window.history.pushState({ restaurantGuard: true }, '');
+    const onPop = () => {
+      handleBackRef.current();
+      window.history.pushState({ restaurantGuard: true }, '');
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [inGame]);
+
+  // Auto-pause when the app goes to the background (phone call, home button, app switch)
+  useEffect(() => {
+    const onVis = () => {
+      if (document.hidden) setScreen((s) => (s === 'playing' ? 'paused' : s));
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
 
   const handleSaveNow = useCallback(() => {
     if (persistSave(saveRef.current)) {
@@ -576,6 +631,7 @@ export default function App() {
     const status = getDailyLoginStatus(saveRef.current.dailyLogin);
     if (!status.canClaim) return;
     sound.playLevelUp();
+    haptic(HAPTIC.success);
     commitSave((prev) => {
       const current = getDailyLoginStatus(prev.dailyLogin);
       if (!current.canClaim) return prev;
@@ -606,6 +662,7 @@ export default function App() {
     ingredientCost: number
   ) => {
     setCookModal(null);
+    haptic(qualityBonus > 1 ? HAPTIC.perfect : HAPTIC.action);
     engineRef.current?.addReadyDishToCounter(recipeId, qualityBonus);
     commitSave((prev) => ({
       ...prev,
@@ -884,8 +941,12 @@ export default function App() {
   const dailyPayroll = getTotalDailyPayroll(save.staff);
 
   const tutorialMessages = [
-    'Walk to the glowing Grill or Fryer and press Space / Cook to prepare a dish.',
-    'Carry your cooked dish to the customer table to serve and earn cash + tips!',
+    isTouch
+      ? 'Drag on the left side to walk to the glowing Grill or Fryer, then tap the Cook button.'
+      : 'Walk to the glowing Grill or Fryer and press Space / Cook to prepare a dish.',
+    isTouch
+      ? 'Carry the dish to the customer’s table and tap Serve to earn cash + tips!'
+      : 'Carry your cooked dish to the customer table to serve and earn cash + tips!',
     'Open Restaurant or Staff below to upgrade equipment or hire a Chef & Waiter.',
     'Withdraw profits in City > Bank, then buy outfits & cars in Lifestyle!',
   ];
@@ -918,6 +979,15 @@ export default function App() {
       {/* Active Gameplay HUD (pointer-events-none wrapper, >=85% viewport unobstructed) */}
       {screen !== 'title' && (
         <div className="fixed inset-0 z-20 pointer-events-none">
+          {/* Touch: floating joystick zone on the left (right side stays for camera drag/pinch) */}
+          {isTouch && drawerTab === 'none' && !cookModal && (
+            <FloatingJoystick
+              onMove={(x, y) => engineRef.current?.setJoystick(x, y)}
+              onTap={(x, y) => engineRef.current?.tapAt(x, y)}
+              bottomInset={dockCollapsed ? 48 : 104}
+            />
+          )}
+
           {/* Projected 3D Order & Clean Bubbles */}
           {hud.bubbles.map((b) => (
             <button
@@ -984,7 +1054,14 @@ export default function App() {
           ))}
 
           {/* Top Perimeter Status Bar */}
-          <header className="flex items-center justify-between gap-2 p-2.5 sm:px-4 sm:py-3">
+          <header
+            className="flex items-start justify-between gap-2 p-2.5 sm:px-4 sm:py-3"
+            style={{
+              paddingTop: 'max(0.625rem, env(safe-area-inset-top))',
+              paddingLeft: 'max(0.625rem, env(safe-area-inset-left))',
+              paddingRight: 'max(0.625rem, env(safe-area-inset-right))',
+            }}
+          >
             {/* Financials & Level Cluster */}
             <div className="pointer-events-auto flex flex-wrap items-center gap-2 sm:gap-3 bg-slate-950/92 border border-slate-700/80 rounded-xl px-3 py-2 shadow-lg">
               <div className="flex items-center gap-1.5">
@@ -1099,7 +1176,7 @@ export default function App() {
 
               <button
                 onClick={() => engineRef.current?.rotateCamera(-0.45)}
-                className="p-2.5 rounded-xl bg-slate-950/92 hover:bg-slate-800 border border-slate-700/80 text-slate-200 cursor-pointer"
+                className="hidden [@media(pointer:fine)]:inline-flex p-2.5 rounded-xl bg-slate-950/92 hover:bg-slate-800 border border-slate-700/80 text-slate-200 cursor-pointer"
                 title="Rotate Camera Left"
                 aria-label="Rotate camera left"
               >
@@ -1107,7 +1184,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => engineRef.current?.rotateCamera(0.45)}
-                className="p-2.5 rounded-xl bg-slate-950/92 hover:bg-slate-800 border border-slate-700/80 text-slate-200 cursor-pointer"
+                className="hidden [@media(pointer:fine)]:inline-flex p-2.5 rounded-xl bg-slate-950/92 hover:bg-slate-800 border border-slate-700/80 text-slate-200 cursor-pointer"
                 title="Rotate Camera Right"
                 aria-label="Rotate camera right"
               >
@@ -1138,7 +1215,7 @@ export default function App() {
                   sound.setMusicMuted(nextMusicMuted);
                   commitSave((p) => ({ ...p, isMusicMuted: nextMusicMuted }));
                 }}
-                className="p-2.5 rounded-xl bg-slate-950/92 hover:bg-slate-800 border border-slate-700/80 text-slate-200 cursor-pointer"
+                className="hidden [@media(pointer:fine)]:inline-flex p-2.5 rounded-xl bg-slate-950/92 hover:bg-slate-800 border border-slate-700/80 text-slate-200 cursor-pointer"
                 title={save.isMusicMuted ? 'Unmute Cafe Music' : 'Mute Cafe Music'}
                 aria-label={save.isMusicMuted ? 'Unmute cafe music' : 'Mute cafe music'}
               >
@@ -1155,7 +1232,7 @@ export default function App() {
                   sound.setMuted(nextMuted);
                   commitSave((p) => ({ ...p, isMuted: nextMuted }));
                 }}
-                className="p-2.5 rounded-xl bg-slate-950/92 hover:bg-slate-800 border border-slate-700/80 text-slate-200 cursor-pointer"
+                className="hidden [@media(pointer:fine)]:inline-flex p-2.5 rounded-xl bg-slate-950/92 hover:bg-slate-800 border border-slate-700/80 text-slate-200 cursor-pointer"
                 title={save.isMuted ? 'Unmute All Audio' : 'Mute All Audio'}
                 aria-label={save.isMuted ? 'Unmute audio' : 'Mute audio'}
               >
@@ -1163,8 +1240,11 @@ export default function App() {
               </button>
 
               <button
-                onClick={() => setScreen('paused')}
-                className="p-2.5 rounded-xl bg-slate-950/92 hover:bg-slate-800 border border-slate-700/80 text-slate-200 cursor-pointer"
+                onClick={() => {
+                  haptic(HAPTIC.tap);
+                  setScreen('paused');
+                }}
+                className="p-3 sm:p-2.5 rounded-xl bg-slate-950/92 hover:bg-slate-800 border border-slate-700/80 text-slate-200 cursor-pointer"
                 aria-label="Pause game"
               >
                 <Pause className="w-4 h-4" />
@@ -1240,24 +1320,64 @@ export default function App() {
           )}
 
           {/* Bottom-Left Touch Joystick + Held Dish Tray */}
-          <div className="fixed bottom-24 sm:bottom-20 left-3 sm:left-5 flex flex-col items-start gap-2.5">
+          <div
+            className="fixed left-3 sm:left-5 flex flex-col items-start gap-2.5"
+            style={{
+              bottom: isTouch ? 'calc(16.5rem + env(safe-area-inset-bottom))' : 'calc(5rem + env(safe-area-inset-bottom))',
+              marginLeft: 'env(safe-area-inset-left)',
+            }}
+          >
             {hud.heldRecipe && (
               <div className="pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-500 text-slate-950 shadow-lg font-bold text-xs">
                 <Utensils className="w-4 h-4" />
                 <span>Carrying: {RECIPES[hud.heldRecipe].name}</span>
               </div>
             )}
-            <VirtualJoystick onMove={(x, y) => engineRef.current?.setJoystick(x, y)} />
+            {!isTouch && <VirtualJoystick onMove={(x, y) => engineRef.current?.setJoystick(x, y)} />}
           </div>
 
           {/* Bottom-Right Context Action Button (Mobile & Desktop) */}
           {hud.nearbyPrompt && (
-            <div className="fixed bottom-24 sm:bottom-20 right-3 sm:right-5">
+            <div
+              className="fixed right-3 sm:right-5"
+              style={{
+                bottom: 'calc(6.5rem + env(safe-area-inset-bottom))',
+                marginRight: 'env(safe-area-inset-right)',
+              }}
+            >
               <button
-                onClick={() => engineRef.current?.triggerContextAction()}
-                className="pointer-events-auto flex items-center gap-2.5 px-5 py-3.5 rounded-2xl bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 shadow-2xl border-2 border-amber-200 cursor-pointer transition-transform"
+                onClick={() => {
+                  haptic(HAPTIC.action);
+                  engineRef.current?.triggerContextAction();
+                }}
+                className="pointer-events-auto flex items-center gap-3 min-h-[64px] px-5 sm:px-5 py-3.5 rounded-2xl bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 shadow-2xl border-2 border-amber-200 cursor-pointer transition-transform animate-action-pop"
               >
-                <Flame className="w-5 h-5 shrink-0" />
+                {(() => {
+                  const t = hud.nearbyPrompt.actionType;
+                  const Icon =
+                    t === 'cook_station'
+                      ? ChefHat
+                      : t === 'serve_table' || t === 'serve_takeaway'
+                        ? Utensils
+                        : t === 'clean_table'
+                          ? Sparkles
+                          : t === 'enter_car' || t === 'exit_car'
+                            ? Car
+                            : t === 'open_bank'
+                              ? Wallet
+                              : t === 'open_supermarket'
+                                ? Store
+                                : t === 'open_home'
+                                  ? Home
+                                  : t === 'open_shop'
+                                    ? ShoppingBag
+                                    : Flame;
+                  return (
+                    <span className="w-10 h-10 rounded-xl bg-slate-950/15 flex items-center justify-center shrink-0">
+                      <Icon className="w-6 h-6" />
+                    </span>
+                  );
+                })()}
                 <div className="text-left">
                   <p className="font-display font-extrabold text-sm leading-tight whitespace-nowrap">
                     {hud.nearbyPrompt.label}
@@ -1273,7 +1393,10 @@ export default function App() {
           )}
 
           {/* Bottom-Center Collapsible Management Dock */}
-          <div className="fixed bottom-3 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 max-w-[96vw]">
+          <div
+            className="fixed left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 max-w-[96vw]"
+            style={{ bottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
+          >
             <button
               onClick={() => setDockCollapsed((c) => !c)}
               className="pointer-events-auto inline-flex items-center gap-1 px-3 py-1 rounded-full bg-slate-950/92 border border-slate-700 text-[11px] font-semibold text-slate-300 hover:text-white cursor-pointer"
@@ -1386,6 +1509,13 @@ export default function App() {
           commitSave((p) => ({ ...p, isMusicMuted: next }));
         }}
         onSaveNow={handleSaveNow}
+        onSetGraphicsQuality={(q) => commitSave((p) => ({ ...p, graphicsQuality: q }))}
+        onToggleHaptics={() => {
+          const next = !(save.hapticsEnabled ?? true);
+          setHapticsEnabled(next);
+          if (next) haptic(HAPTIC.action);
+          commitSave((p) => ({ ...p, hapticsEnabled: next }));
+        }}
         onResetSave={handleResetCareer}
         onAdvanceTimeOfDay={() =>
           commitSave((p) => ({ ...p, timeOfDay: (p.timeOfDay + 0.25) % 1 }))
@@ -1433,6 +1563,60 @@ export default function App() {
               >
                 <Play className="w-4 h-4 fill-current" /> Resume Game
               </button>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  {
+                    label: 'Sound',
+                    on: !save.isMuted,
+                    icon: save.isMuted ? VolumeX : Volume2,
+                    toggle: () => {
+                      const next = !save.isMuted;
+                      sound.setMuted(next);
+                      commitSave((p) => ({ ...p, isMuted: next }));
+                    },
+                  },
+                  {
+                    label: 'Music',
+                    on: !save.isMusicMuted,
+                    icon: Music,
+                    toggle: () => {
+                      const next = !save.isMusicMuted;
+                      sound.unlock();
+                      if (!next) sound.startMusic();
+                      sound.setMusicMuted(next);
+                      commitSave((p) => ({ ...p, isMusicMuted: next }));
+                    },
+                  },
+                  {
+                    label: 'Vibration',
+                    on: save.hapticsEnabled ?? true,
+                    icon: Vibrate,
+                    toggle: () => {
+                      const next = !(save.hapticsEnabled ?? true);
+                      setHapticsEnabled(next);
+                      if (next) haptic(HAPTIC.action);
+                      commitSave((p) => ({ ...p, hapticsEnabled: next }));
+                    },
+                  },
+                ].map((opt) => {
+                  const Icon = opt.icon;
+                  return (
+                    <button
+                      key={opt.label}
+                      onClick={opt.toggle}
+                      aria-pressed={opt.on}
+                      className={`min-h-[64px] rounded-xl border flex flex-col items-center justify-center gap-1 text-xs font-bold cursor-pointer ${
+                        opt.on
+                          ? 'bg-slate-900 border-amber-500/60 text-amber-300'
+                          : 'bg-slate-900 border-slate-700 text-slate-500'
+                      }`}
+                    >
+                      <Icon className="w-5 h-5" />
+                      {opt.label} {opt.on ? 'on' : 'off'}
+                    </button>
+                  );
+                })}
+              </div>
               <button
                 onClick={handleSaveNow}
                 className="w-full py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-100 font-semibold text-sm cursor-pointer"
