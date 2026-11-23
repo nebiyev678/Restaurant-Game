@@ -298,7 +298,19 @@ export const CookingMiniGame: React.FC<CookingMiniGameProps> = ({
                     <span>Tap inside the golden zone for +25% Perfect Quality!</span>
                     <span className="font-mono-num text-amber-400">{Math.round(gaugePos)}%</span>
                   </div>
-                  <div className="relative h-7 rounded-lg bg-slate-950 border border-slate-700 overflow-hidden">
+                  <div
+                    role="button"
+                    aria-label="Tap when the marker is in the green zone"
+                    onPointerDown={(e) => {
+                      // React on touch-down (not release) so timing feels instant on phones
+                      e.preventDefault();
+                      handleStepAction();
+                    }}
+                    className="relative h-14 sm:h-9 rounded-xl bg-slate-950 border border-slate-700 overflow-hidden cursor-pointer touch-none select-none active:border-amber-400"
+                  >
+                    <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-[11px] font-extrabold tracking-widest text-slate-500">
+                      TAP IN THE GREEN
+                    </span>
                     <div
                       className="absolute inset-y-0 bg-emerald-500/35 border-x-2 border-emerald-400"
                       style={{ left: `${sweetStart}%`, width: `${sweetWidth}%` }}
@@ -327,7 +339,7 @@ export const CookingMiniGame: React.FC<CookingMiniGameProps> = ({
                 <button
                   disabled={!canAfford}
                   onClick={handleStepAction}
-                  className={`flex-1 py-3 px-4 rounded-xl font-display font-bold text-sm flex items-center justify-center gap-2 transition-transform active:scale-95 cursor-pointer ${
+                  className={`flex-1 min-h-[56px] py-3 px-4 rounded-xl font-display font-bold text-sm flex items-center justify-center gap-2 transition-transform active:scale-95 cursor-pointer ${
                     canAfford
                       ? 'bg-amber-500 hover:bg-amber-400 text-slate-950'
                       : 'bg-slate-800 text-slate-500 cursor-not-allowed'
@@ -348,7 +360,7 @@ export const CookingMiniGame: React.FC<CookingMiniGameProps> = ({
                 <button
                   disabled={!canAfford}
                   onClick={handleQuickPrep}
-                  className="py-3 px-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-xs font-semibold text-slate-200 whitespace-nowrap shrink-0 cursor-pointer"
+                  className="min-h-[56px] py-3 px-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-xs font-semibold text-slate-200 whitespace-nowrap shrink-0 cursor-pointer"
                   title="Skip timing step at standard 1.0x quality"
                 >
                   Quick Cook

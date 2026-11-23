@@ -1359,5 +1359,7 @@ export function createInitialSaveState(): SaveState {
     },
     today: createEmptyDayStats(),
     lastSeenAt: null,
+    graphicsQuality: 'auto',
+    hapticsEnabled: true,
   };
 }

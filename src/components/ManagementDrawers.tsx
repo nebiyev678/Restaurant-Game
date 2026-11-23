@@ -86,6 +86,8 @@ interface ManagementDrawersProps {
   onToggleMute: () => void;
   onToggleMusicMute: () => void;
   onSaveNow: () => void;
+  onSetGraphicsQuality: (q: SaveState['graphicsQuality']) => void;
+  onToggleHaptics: () => void;
   onResetSave: () => void;
   onAdvanceTimeOfDay: () => void;
 }
@@ -117,6 +119,8 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
   onToggleMute,
   onToggleMusicMute,
   onSaveNow,
+  onSetGraphicsQuality,
+  onToggleHaptics,
   onResetSave,
   onAdvanceTimeOfDay,
 }) => {
@@ -1381,6 +1385,48 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                 >
                   <Music className={`w-4 h-4 ${save.isMusicMuted ? 'text-slate-500' : 'text-amber-400'}`} />
                   {save.isMusicMuted ? 'Muted' : 'Playing'}
+                </button>
+              </div>
+
+              <div className="rounded-xl bg-slate-900 border border-slate-800 p-4 space-y-3">
+                <div>
+                  <p className="font-semibold text-sm text-white">Graphics Quality</p>
+                  <p className="text-xs text-slate-400">
+                    Lower settings run smoother and save battery on phones. Auto adjusts itself if the game slows down.
+                  </p>
+                </div>
+                <div className="grid grid-cols-4 gap-1.5 p-1 rounded-xl bg-slate-950 border border-slate-800">
+                  {(['auto', 'low', 'medium', 'high'] as const).map((q) => {
+                    const active = (save.graphicsQuality ?? 'auto') === q;
+                    return (
+                      <button
+                        key={q}
+                        onClick={() => onSetGraphicsQuality(q)}
+                        aria-pressed={active}
+                        className={`min-h-[44px] rounded-lg text-xs font-bold capitalize cursor-pointer transition-colors ${
+                          active ? 'bg-amber-500 text-slate-950' : 'text-slate-300 hover:text-white'
+                        }`}
+                      >
+                        {q}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="rounded-xl bg-slate-900 border border-slate-800 p-4 flex items-center justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-sm text-white">Vibration</p>
+                  <p className="text-xs text-slate-400">Feel taps, perfect cooks, served orders and level-ups (Android)</p>
+                </div>
+                <button
+                  onClick={onToggleHaptics}
+                  aria-pressed={save.hapticsEnabled ?? true}
+                  className={`min-w-[72px] min-h-[44px] px-4 rounded-lg text-xs font-bold cursor-pointer ${
+                    save.hapticsEnabled ?? true ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 text-slate-400'
+                  }`}
+                >
+                  {save.hapticsEnabled ?? true ? 'On' : 'Off'}
                 </button>
               </div>
 
