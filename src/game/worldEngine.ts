@@ -44,7 +44,9 @@ import {
   createPendantLampMesh,
   createPottedPlantMesh,
   createPrettyDiningFloorTextures,
-  createPrettyKitchenFloorTextures,
+  createAntiFatigueMatMesh,
+  createFloorDrainMesh,
+  createQuarryTileFloorTextures,
   createRangeHoodMesh,
   createRefrigeratorMesh,
   createRegisterStationMesh,
@@ -729,29 +731,31 @@ export class RestaurantWorldEngine {
     subfloor.receiveShadow = true;
     this.restaurantGroup.add(subfloor);
 
-    // Kitchen Floor Zone (clean octagon-dot hygienic porcelain tile with tactile grout relief)
+    // Kitchen Floor Zone: real commercial red quarry tile (15 cm) with dark epoxy grout
     const kitchenStartX = minX + 0.27;
     const kitchenEndX = minX + 5.68;
     const kitchenW = kitchenEndX - kitchenStartX;
     const floorSpanD = d - 0.54;
-    const kitchenTextures = createPrettyKitchenFloorTextures(
-      activeTheme,
-      3,
-      Math.max(5, Math.round(floorSpanD / 1.85)),
-      maxAniso
-    );
+    const kitchenTextures = createQuarryTileFloorTextures(kitchenW, floorSpanD, maxAniso);
     const kitchenFloor = new THREE.Mesh(
       new THREE.BoxGeometry(kitchenW, 0.018, floorSpanD),
       new THREE.MeshStandardMaterial({
         map: kitchenTextures.map,
         bumpMap: kitchenTextures.bumpMap,
-        bumpScale: 0.014,
-        roughness: 0.42,
+        bumpScale: 0.02,
+        roughnessMap: kitchenTextures.roughnessMap,
+        roughness: 1,
+        metalness: 0,
       })
     );
     kitchenFloor.position.set(kitchenStartX + kitchenW / 2, 0.101, 0);
     kitchenFloor.receiveShadow = true;
     this.restaurantGroup.add(kitchenFloor);
+
+    // Stainless floor drain in the middle of the cooking line
+    const drain = createFloorDrainMesh();
+    drain.position.set(kitchenStartX + kitchenW * 0.55, 0.111, 0.9);
+    this.restaurantGroup.add(drain);
 
     // Dining Floor Zone (bespoke mosaic-bordered designer tile / herringbone wood with cabochons & center medallion)
     const diningEndX = maxX - 0.26;
@@ -1119,6 +1123,11 @@ export class RestaurantWorldEngine {
       const rz = st.type === 'bar' ? st.z + 1.25 : st.z;
       ring.position.set(rx, 0.13, rz);
       this.restaurantGroup.add(ring);
+
+      // Black rubber anti-fatigue mat where the cook stands
+      const mat = st.type === 'bar' ? createAntiFatigueMatMesh(1.5, 0.75) : createAntiFatigueMatMesh(0.75, 1.5);
+      mat.position.set(rx, 0.111, rz);
+      this.restaurantGroup.add(mat);
 
       this.stations.push({ type: st.type, x: rx, z: rz, mx: st.x, mz: st.z, ring });
     });
