@@ -7,6 +7,9 @@ import {VitePWA} from 'vite-plugin-pwa';
 
 export default defineConfig(() => {
   return {
+    // '/' for local dev and the Capacitor Android build; the GitHub Pages workflow
+    // sets VITE_BASE=/<repo>/ because the site lives in a sub-folder there.
+    base: process.env.VITE_BASE || '/',
     plugins: [
       react(),
       tailwindcss(),
@@ -29,24 +32,25 @@ export default defineConfig(() => {
           background_color: '#0f172a',
           display: 'fullscreen',
           orientation: 'any',
-          start_url: '/',
-          scope: '/',
+          // Relative to the manifest so the app works at any base path
+          start_url: '.',
+          scope: '.',
           categories: ['games', 'simulation'],
           icons: [
             {
-              src: '/pwa-192x192.png',
+              src: 'pwa-192x192.png',
               sizes: '192x192',
               type: 'image/png',
               purpose: 'any',
             },
             {
-              src: '/pwa-512x512.png',
+              src: 'pwa-512x512.png',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'any',
             },
             {
-              src: '/pwa-maskable-512x512.png',
+              src: 'pwa-maskable-512x512.png',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable',
