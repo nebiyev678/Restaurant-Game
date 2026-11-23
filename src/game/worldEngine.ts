@@ -12,7 +12,12 @@ import {
   RECIPE_LIST,
   STATION_INFO,
   VEHICLE_CATALOG,
+  STREAK_WINDOW,
   getActiveStations,
+  getComboBonusMult,
+  getMasteryPriceMult,
+  getStreakMult,
+  rollComboSize,
   getCleanlinessPatienceMult,
   getEarlyPatienceMult,
   getEarlySpawnDelay,
@@ -160,6 +165,8 @@ interface SimStaff {
   targetTableId: number | null;
   targetOrderId: string | null;
   carryingRecipe: RecipeId | null;
+  /** Dish a chef is currently cooking (so two chefs don't cook the same thing). */
+  cookingRecipe: RecipeId | null;
   carryingQuality: number;
   carryingMesh: THREE.Group | null;
   walkPhase: number;
@@ -181,8 +188,13 @@ export interface EngineCallbacks {
     tip: number,
     repDelta: number,
     xpGain: number,
-    worldPos: { x: number; y: number; z: number }
+    worldPos: { x: number; y: number; z: number },
+    info: { items: RecipeId[]; comboSize: number; streak: number; streakMult: number }
   ) => void;
+  /** One dish of a combo delivered, more still to come. */
+  onItemServed: (recipeId: RecipeId, remaining: number) => void;
+  /** Streak changed (count 0 = it broke or cooled down). */
+  onStreakChanged: (count: number, mult: number) => void;
   onOrderFailed: (repDelta: number) => void;
   onCookRequested: (station: StationType, suggestedOrder: CustomerOrder | null) => void;
   onShopRequested: (tab: DrawerTab, subTab?: string) => void;
@@ -306,6 +318,9 @@ export class RestaurantWorldEngine {
   private passDishGroup: THREE.Group | null = null;
   /** Customers who arrive by car and use the restaurant parking lot. */
   private parking!: ParkingTraffic;
+  /** Serving streak: consecutive completed orders without a walk-out. */
+  private streakCount = 0;
+  private streakTimer = 0;
   /** Dishes cooking on machines (one per machine). */
   private cookJobs = new Map<StationType, { recipeId: RecipeId; quality: number; remaining: number; total: number; steam: number }>();
   private passDishKey = '';
@@ -413,6 +428,30 @@ export class RestaurantWorldEngine {
     }
   }
 
+  // ---- Combo order helpers ----------------------------------------------------
+  /** Does this waiting order still need this dish? */
+  private orderNeeds(o: CustomerOrder, recipeId: RecipeId): boolean {
+    return o.status === 'waiting' && o.remaining.includes(recipeId);
+  }
+
+  /** The first still-needed dish of an order that is cooked on a given machine. */
+  private remainingAtStation(o: CustomerOrder, station: StationType): RecipeId | undefined {
+    return o.status === 'waiting' ? o.remaining.find((r) => RECIPES[r].station === station) : undefined;
+  }
+
+  /** All dishes still needed across waiting orders (with repeats). */
+  private allNeededDishes(): RecipeId[] {
+    return this.orders.filter((o) => o.status === 'waiting').flatMap((o) => o.remaining);
+  }
+
+  private breakStreak() {
+    if (this.streakCount > 0) {
+      this.streakCount = 0;
+      this.streakTimer = 0;
+      this.callbacks.onStreakChanged(0, 1);
+    }
+  }
+
   /** A dirty table that no other staff member is already walking to / cleaning. */
   private findUnclaimedDirtyTable(self: { id: string }) {
     const claimed = new Set(
@@ -494,7 +533,7 @@ export class RestaurantWorldEngine {
   /** Picks a dish up from the pass counter, preferring one a customer is waiting for. */
   public pickUpFromCounter(): boolean {
     if (this.heldRecipe || this.readyDishes.length === 0) return false;
-    const wanted = new Set(this.orders.filter((o) => o.status === 'waiting').map((o) => o.recipeId));
+    const wanted = new Set(this.allNeededDishes());
     let idx = this.readyDishes.findIndex((d) => wanted.has(d.recipeId));
     if (idx < 0) idx = 0;
     const [dish] = this.readyDishes.splice(idx, 1);
@@ -542,7 +581,7 @@ export class RestaurantWorldEngine {
 
   /** Opens the cooking window for a machine (from its floating sign). */
   public openCookAtStation(type: StationType) {
-    const pending = this.orders.find((o) => o.status === 'waiting' && RECIPES[o.recipeId].station === type) ?? null;
+    const pending = this.orders.find((o) => this.remainingAtStation(o, type)) ?? null;
     this.callbacks.onCookRequested(type, pending);
   }
 
@@ -767,6 +806,8 @@ export class RestaurantWorldEngine {
       this.lastTimeOfDay = -1;
       this.cookJobs.clear();
       this.parking?.clear();
+      this.streakCount = 0;
+      this.streakTimer = 0;
     }
 
     // 1. Rebuild Restaurant Structure & Tables if tier or cafe theme changed
@@ -1644,6 +1685,7 @@ export class RestaurantWorldEngine {
           activityTime: 0,
           seedOffset: idx * 1.37 + Math.random() * 2,
           targetTableId: null,
+          cookingRecipe: null,
           targetOrderId: null,
           carryingRecipe: null,
           carryingQuality: 1.0,
@@ -1985,9 +2027,7 @@ export class RestaurantWorldEngine {
 
     if (prompt.actionType === 'cook_station' && prompt.stationType) {
       const matchingOrder =
-        this.orders.find(
-          (o) => o.status === 'waiting' && RECIPES[o.recipeId].station === prompt.stationType
-        ) ??
+        this.orders.find((o) => this.remainingAtStation(o, prompt.stationType!)) ??
         this.orders.find((o) => o.status === 'waiting') ??
         null;
       this.callbacks.onCookRequested(prompt.stationType, matchingOrder);
@@ -2033,7 +2073,7 @@ export class RestaurantWorldEngine {
       for (const tbl of this.tables) {
         if (!tbl.occupiedBy) continue;
         const order = this.orders.find(
-          (o) => o.tableId === tbl.id && o.status === 'waiting' && o.recipeId === this.heldRecipe
+          (o) => o.tableId === tbl.id && this.orderNeeds(o, this.heldRecipe!)
         );
         if (order && Math.hypot(this.playerPos.x - tbl.x, this.playerPos.z - tbl.z) < 2.6) {
           return {
@@ -2047,9 +2087,7 @@ export class RestaurantWorldEngine {
       }
 
       // Takeaway counter
-      const takeOrder = this.orders.find(
-        (o) => o.tableId === -1 && o.status === 'waiting' && o.recipeId === this.heldRecipe
-      );
+      const takeOrder = this.orders.find((o) => o.tableId === -1 && this.orderNeeds(o, this.heldRecipe!));
       if (takeOrder && this.playerPos.distanceTo(this.registerPos) < 2.8) {
         return {
           id: 'serve_takeaway',
@@ -2081,7 +2119,7 @@ export class RestaurantWorldEngine {
           };
         }
       } else if (nearPass && this.readyDishes.length > 0) {
-        const wanted = new Set(this.orders.filter((o) => o.status === 'waiting').map((o) => o.recipeId));
+        const wanted = new Set(this.allNeededDishes());
         const dish = this.readyDishes.find((d) => wanted.has(d.recipeId)) ?? this.readyDishes[0];
         return {
           id: 'pick_up',
@@ -2111,13 +2149,12 @@ export class RestaurantWorldEngine {
     if (playerInside) {
       for (const st of this.stations) {
         if (Math.hypot(this.playerPos.x - st.x, this.playerPos.z - st.z) < 2.15) {
-          const pending = this.orders.find(
-            (o) => o.status === 'waiting' && RECIPES[o.recipeId].station === st.type
-          );
+          const pending = this.orders.find((o) => this.remainingAtStation(o, st.type));
+          const pendingDish = pending ? this.remainingAtStation(pending, st.type) : undefined;
           const stationLabel = STATION_INFO[st.type].name;
           return {
             id: `cook_${st.type}`,
-            label: pending ? `Cook ${RECIPES[pending.recipeId].name}` : `Use ${stationLabel}`,
+            label: pendingDish ? `Cook ${RECIPES[pendingDish].name}` : `Use ${stationLabel}`,
             sublabel: pending ? `For ${pending.customerName}` : 'Prepare dish',
             actionType: 'cook_station',
             stationType: st.type,
@@ -2190,24 +2227,22 @@ export class RestaurantWorldEngine {
 
   private serveTableByPlayer(tableId: number) {
     if (!this.heldRecipe) return;
-    const orderIdx = this.orders.findIndex(
-      (o) => o.tableId === tableId && o.status === 'waiting' && o.recipeId === this.heldRecipe
-    );
-    if (orderIdx === -1) return;
-    const order = this.orders[orderIdx];
-    this.completeOrderDelivery(order, this.heldQuality);
+    const order = this.orders.find((o) => o.tableId === tableId && this.orderNeeds(o, this.heldRecipe!));
+    if (!order) return;
+    const recipe = this.heldRecipe;
+    const quality = this.heldQuality;
     this.clearHeldDish();
+    this.deliverItem(order, recipe, quality);
   }
 
   private serveTakeawayByPlayer() {
     if (!this.heldRecipe) return;
-    const orderIdx = this.orders.findIndex(
-      (o) => o.tableId === -1 && o.status === 'waiting' && o.recipeId === this.heldRecipe
-    );
-    if (orderIdx === -1) return;
-    const order = this.orders[orderIdx];
-    this.completeOrderDelivery(order, this.heldQuality);
+    const order = this.orders.find((o) => o.tableId === -1 && this.orderNeeds(o, this.heldRecipe!));
+    if (!order) return;
+    const recipe = this.heldRecipe;
+    const quality = this.heldQuality;
     this.clearHeldDish();
+    this.deliverItem(order, recipe, quality);
   }
 
   private cleanTableByPlayer(tableId: number) {
@@ -2220,23 +2255,72 @@ export class RestaurantWorldEngine {
     this.callbacks.onTableCleaned();
   }
 
-  private completeOrderDelivery(order: CustomerOrder, qualityBonus: number) {
+  /**
+   * Delivers one dish of an order. Combos stay open (with a small patience boost)
+   * until every dish has arrived; then the whole order is paid out.
+   */
+  private deliverItem(order: CustomerOrder, recipeId: RecipeId, qualityBonus: number): boolean {
+    const idx = order.remaining.indexOf(recipeId);
+    if (order.status !== 'waiting' || idx === -1) return false;
+    order.remaining.splice(idx, 1);
+    order.qualitySum += qualityBonus;
+    if (order.remaining.length > 0) order.recipeId = order.remaining[0];
+
+    // Show the dish on the table (combos line up side by side)
+    if (order.tableId !== -1) {
+      const tbl = this.tables.find((t) => t.id === order.tableId);
+      if (tbl) {
+        if (!tbl.servedDishMesh) {
+          tbl.servedDishMesh = new THREE.Group();
+          tbl.parts.plateAnchor.add(tbl.servedDishMesh);
+        }
+        const n = tbl.servedDishMesh.children.length;
+        const dish = createDishMesh(recipeId);
+        if (order.items.length > 1) {
+          dish.scale.setScalar(0.8);
+          dish.position.x = (n - (order.items.length - 1) / 2) * 0.34;
+        }
+        tbl.servedDishMesh.add(dish);
+      }
+    }
+
+    if (order.remaining.length > 0) {
+      order.patience = Math.min(order.maxPatience, order.patience + order.maxPatience * 0.12);
+      sound.playClick();
+      this.callbacks.onItemServed(recipeId, order.remaining.length);
+      return true;
+    }
+    this.finalizeOrder(order);
+    return true;
+  }
+
+  private finalizeOrder(order: CustomerOrder) {
     order.status = 'served';
     this.orders = this.orders.filter((o) => o.id !== order.id);
 
     const cust = this.customers.find((c) => c.id === order.customerId);
     const save = this.saveRef.current;
-    const def = RECIPES[order.recipeId];
+    const qualityBonus = order.qualitySum / Math.max(1, order.items.length);
 
-    // Financial math
+    // Financial math (every dish in the combo counts; mastery raises each dish's price)
     const repFactor = 0.85 + save.reputation * 0.1;
     const decorFactor = 1 + (save.equipmentLevels.decor - 1) * 0.1;
     const regFactor = 1 + (save.equipmentLevels.register - 1) * 0.08;
-    const specialtyFactor =
-      def.station === 'specialty' ? 1 + ((save.equipmentLevels.specialty ?? 1) - 1) * 0.1 : 1;
     const patienceRatio = order.patience / order.maxPatience;
+    const itemsValue = order.items.reduce((sum, r) => {
+      const def = RECIPES[r];
+      const specialtyFactor =
+        def.station === 'specialty' ? 1 + ((save.equipmentLevels.specialty ?? 1) - 1) * 0.1 : 1;
+      return sum + def.sellPrice * specialtyFactor * getMasteryPriceMult(save.recipeMastery?.[r] ?? 0);
+    }, 0);
+    const baseSale = Math.round(itemsValue * qualityBonus * getComboBonusMult(order.items.length));
 
-    const baseSale = Math.round(def.sellPrice * qualityBonus * specialtyFactor);
+    // Serving streak: completed in a row (resets on a walk-out or after STREAK_WINDOW idle seconds)
+    this.streakCount += 1;
+    this.streakTimer = STREAK_WINDOW;
+    const streakMult = getStreakMult(this.streakCount);
+    this.callbacks.onStreakChanged(this.streakCount, streakMult);
+
     const tipRate =
       order.archetype === 'vip'
         ? 0.45
@@ -2261,7 +2345,8 @@ export class RestaurantWorldEngine {
         repFactor *
         themeTipMult *
         prestigeTipMult *
-        cashierTipMult
+        cashierTipMult *
+        streakMult
     );
 
     const repDelta =
@@ -2269,41 +2354,36 @@ export class RestaurantWorldEngine {
       (patienceRatio > 0.5 ? 1 : 0.4) *
       (qualityBonus > 1.05 ? 1.3 : 1) *
       getCleanlinessReputationMult(save.cleanliness);
-    const xpGain = Math.round(16 + def.sellPrice * 0.45);
+    const xpGain = Math.round(16 + itemsValue * 0.45);
+    const info = {
+      items: order.items.slice(),
+      comboSize: order.items.length,
+      streak: this.streakCount,
+      streakMult,
+    };
 
     if (order.tableId !== -1) {
       const tbl = this.tables.find((t) => t.id === order.tableId);
-      if (tbl) {
-        if (tbl.servedDishMesh) tbl.parts.plateAnchor.remove(tbl.servedDishMesh);
-        tbl.servedDishMesh = createDishMesh(order.recipeId);
-        tbl.parts.plateAnchor.add(tbl.servedDishMesh);
-      }
       if (cust) {
         cust.state = 'eating';
-        cust.eatTimer = 4.0;
+        cust.eatTimer = 4.0 + (order.items.length - 1) * 1.5;
       }
-      this.spawnBurst(tbl?.x ?? 0, 1.2, tbl?.z ?? 0, '#10b981', 10);
-      this.callbacks.onOrderServed(
-        order.recipeId,
-        baseSale,
-        tip,
-        repDelta,
-        xpGain,
-        { x: tbl?.x ?? 0, y: 1.9, z: tbl?.z ?? 0 }
-      );
+      this.spawnBurst(tbl?.x ?? 0, 1.2, tbl?.z ?? 0, '#10b981', 10 + order.items.length * 4);
+      this.callbacks.onOrderServed(order.items[0], baseSale, tip, repDelta, xpGain, {
+        x: tbl?.x ?? 0,
+        y: 1.9,
+        z: tbl?.z ?? 0,
+      }, info);
     } else {
       if (cust) {
         this.sendCustomerToExit(cust);
       }
       this.spawnBurst(this.registerPos.x, 1.3, this.registerPos.z, '#10b981', 10);
-      this.callbacks.onOrderServed(
-        order.recipeId,
-        baseSale,
-        tip,
-        repDelta,
-        xpGain,
-        { x: this.registerPos.x, y: 2.0, z: this.registerPos.z }
-      );
+      this.callbacks.onOrderServed(order.items[0], baseSale, tip, repDelta, xpGain, {
+        x: this.registerPos.x,
+        y: 2.0,
+        z: this.registerPos.z,
+      }, info);
     }
     sound.playCash();
   }
@@ -2417,12 +2497,16 @@ export class RestaurantWorldEngine {
     this.updateParticles(dt);
 
     this.updateCookJobs(dt);
+    if (this.streakCount > 0) {
+      this.streakTimer -= dt;
+      if (this.streakTimer <= 0) this.breakStreak();
+    }
     this.syncPassDishes();
 
     // Machines with a customer waiting for one of their dishes glow and pulse
     this.stationPulseTime += dt;
     for (const st of this.stations) {
-      const hasOrder = this.orders.some((o) => o.status === 'waiting' && RECIPES[o.recipeId].station === st.type);
+      const hasOrder = this.orders.some((o) => this.remainingAtStation(o, st.type));
       const mat = st.ring.material as THREE.MeshBasicMaterial;
       if (hasOrder) {
         const k = 0.5 + 0.5 * Math.sin(this.stationPulseTime * 5);
@@ -2690,12 +2774,12 @@ export class RestaurantWorldEngine {
     if (this.heldRecipe && !this.inVehicle && this.isInsideRestaurant(this.playerPos.x, this.playerPos.z)) {
       for (const tbl of this.tables) {
         if (!tbl.occupiedBy) continue;
-        const order = this.orders.find(
-          (o) => o.tableId === tbl.id && o.status === 'waiting' && o.recipeId === this.heldRecipe
-        );
+        const order = this.orders.find((o) => o.tableId === tbl.id && this.orderNeeds(o, this.heldRecipe!));
         if (order && Math.hypot(this.playerPos.x - tbl.x, this.playerPos.z - tbl.z) < 1.55) {
-          this.completeOrderDelivery(order, this.heldQuality);
+          const recipe = this.heldRecipe;
+          const quality = this.heldQuality;
           this.clearHeldDish();
+          this.deliverItem(order, recipe, quality);
           break;
         }
       }
@@ -3247,6 +3331,7 @@ export class RestaurantWorldEngine {
               sound.playCustomerUnhappy();
             }
             this.callbacks.onOrderFailed(-0.08);
+            this.breakStreak();
             if (isSeated) {
               c.state = 'standing_up';
             } else {
@@ -3361,14 +3446,27 @@ export class RestaurantWorldEngine {
 
   private createCustomerOrder(c: SimCustomer) {
     const save = this.saveRef.current;
-    const unlocked = save.unlockedRecipes;
-    const recipeId = unlocked[Math.floor(Math.random() * unlocked.length)] ?? 'burger';
-    const maxPat = c.archetype === 'impatient' ? 70 : c.archetype === 'vip' ? 95 : 100;
+    const unlocked = save.unlockedRecipes.length > 0 ? save.unlockedRecipes : (['burger'] as RecipeId[]);
+    // Combos (2–3 dishes) from level 3, preferring different dishes
+    const size = rollComboSize(save.restaurantLevel, unlocked.length);
+    const pool = unlocked.slice();
+    const items: RecipeId[] = [];
+    for (let k = 0; k < size; k++) {
+      if (pool.length === 0) pool.push(...unlocked);
+      items.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+    }
+    const recipeId = items[0];
+    // Bigger orders get proportionally more patience
+    const basePat = c.archetype === 'impatient' ? 70 : c.archetype === 'vip' ? 95 : 100;
+    const maxPat = Math.round(basePat * (1 + (items.length - 1) * 0.45));
     const order: CustomerOrder = {
       id: `ord_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       customerId: c.id,
       tableId: c.tableId,
       recipeId,
+      items,
+      remaining: items.slice(),
+      qualitySum: 0,
       archetype: c.archetype,
       customerName: c.name,
       status: 'waiting',
@@ -3648,9 +3746,31 @@ export class RestaurantWorldEngine {
       if (agent.role === 'chef') {
         if (agent.state === 'idle') {
           agent.poseMode = 'locomotion';
-          const waitingOrder = this.orders.find((o) => o.status === 'waiting');
-          if (waitingOrder && this.readyDishes.length < 6) {
-            const stType = RECIPES[waitingOrder.recipeId].station;
+          // Cook a still-needed dish that isn't already ready, cooking, or being cooked by another chef
+          const covered: RecipeId[] = [
+            ...this.readyDishes.map((d) => d.recipeId),
+            ...Array.from(this.cookJobs.values()).map((j) => j.recipeId),
+            ...this.staffAgents.filter((a) => a !== agent && a.cookingRecipe).map((a) => a.cookingRecipe!),
+            ...(this.heldRecipe ? [this.heldRecipe] : []),
+          ];
+          let dishToCook: RecipeId | undefined;
+          let waitingOrder: CustomerOrder | undefined;
+          for (const o of this.orders) {
+            if (o.status !== 'waiting') continue;
+            for (const r of o.remaining) {
+              const ci = covered.indexOf(r);
+              if (ci >= 0) {
+                covered.splice(ci, 1);
+                continue;
+              }
+              dishToCook = r;
+              waitingOrder = o;
+              break;
+            }
+            if (dishToCook) break;
+          }
+          if (waitingOrder && dishToCook && this.readyDishes.length < 6) {
+            const stType = RECIPES[dishToCook].station;
             const st = this.stations.find((s) => s.type === stType) ?? this.stations[0];
             if (st) {
               const eqLv = save.equipmentLevels[stType] ?? 1;
@@ -3660,7 +3780,8 @@ export class RestaurantWorldEngine {
               agent.facingYaw = st.type === 'bar' ? Math.PI : -Math.PI / 2;
               agent.poseMode = 'cooking';
               agent.state = 'working';
-              agent.timer = RECIPES[waitingOrder.recipeId].basePrepTime / (0.85 * spdMult * eqSpeedMult);
+              agent.cookingRecipe = dishToCook;
+              agent.timer = RECIPES[dishToCook].basePrepTime / (0.85 * spdMult * eqSpeedMult);
             }
           }
         } else if (agent.state === 'working') {
@@ -3671,14 +3792,15 @@ export class RestaurantWorldEngine {
           }
           if (agent.timer <= 0) {
             const order = this.orders.find((o) => o.id === agent.targetOrderId);
-            if (order) {
+            if (order && agent.cookingRecipe) {
               this.readyDishes.push({
                 id: `ready_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
-                recipeId: order.recipeId,
+                recipeId: agent.cookingRecipe,
                 qualityBonus: 1.0,
               });
               this.callbacks.onStaffTaskDone(agent.id);
             }
+            agent.cookingRecipe = null;
             agent.targetOrderId = null;
             agent.poseMode = 'locomotion';
             agent.facingYaw = null;
@@ -3690,9 +3812,7 @@ export class RestaurantWorldEngine {
         if (agent.state === 'idle') {
           for (let rIdx = 0; rIdx < this.readyDishes.length; rIdx++) {
             const dish = this.readyDishes[rIdx];
-            const ord = this.orders.find(
-              (o) => o.status === 'waiting' && o.recipeId === dish.recipeId
-            );
+            const ord = this.orders.find((o) => this.orderNeeds(o, dish.recipeId));
             if (ord) {
               this.readyDishes.splice(rIdx, 1);
               agent.carryingRecipe = dish.recipeId;
@@ -3750,9 +3870,16 @@ export class RestaurantWorldEngine {
           }
         } else if (agent.state === 'carrying') {
           const ord = this.orders.find((o) => o.id === agent.targetOrderId);
-          if (ord && ord.status === 'waiting') {
-            this.completeOrderDelivery(ord, agent.carryingQuality);
+          if (ord && agent.carryingRecipe && this.orderNeeds(ord, agent.carryingRecipe)) {
+            this.deliverItem(ord, agent.carryingRecipe, agent.carryingQuality);
             this.callbacks.onStaffTaskDone(agent.id);
+          } else if (agent.carryingRecipe) {
+            // Someone else delivered it meanwhile: put the dish back on the pass
+            this.readyDishes.push({
+              id: `dish_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              recipeId: agent.carryingRecipe,
+              qualityBonus: agent.carryingQuality,
+            });
           }
           if (agent.carryingMesh) {
             agent.mesh.carryAnchor.remove(agent.carryingMesh);
@@ -3800,13 +3927,14 @@ export class RestaurantWorldEngine {
           this.setStaffDestination(agent, -5.5, -3.48);
         }
         agent.facingYaw = 0; // Face dining room & takeaway queue
-        const takeOrd = this.orders.find((o) => o.tableId === -1 && o.status === 'waiting');
-        if (takeOrd) {
-          const dIdx = this.readyDishes.findIndex((d) => d.recipeId === takeOrd.recipeId);
+        for (const takeOrd of this.orders) {
+          if (takeOrd.tableId !== -1 || takeOrd.status !== 'waiting') continue;
+          const dIdx = this.readyDishes.findIndex((d) => takeOrd.remaining.includes(d.recipeId));
           if (dIdx !== -1) {
             const d = this.readyDishes.splice(dIdx, 1)[0];
-            this.completeOrderDelivery(takeOrd, d.qualityBonus);
+            this.deliverItem(takeOrd, d.recipeId, d.qualityBonus);
             this.callbacks.onStaffTaskDone(agent.id);
+            break;
           }
         }
       } else if (agent.role === 'manager' || agent.role === 'driver') {
@@ -3892,6 +4020,7 @@ export class RestaurantWorldEngine {
               kind: order.tableId === -1 ? 'takeaway' : 'order',
               anchor: { x: c.mesh.root.position.x, y: 2.45, z: c.mesh.root.position.z },
               recipeId: order.recipeId,
+              recipeIds: order.remaining.slice(),
               patience: (order.patience / order.maxPatience) * 100,
               label: RECIPES[order.recipeId].name,
               archetype: order.archetype,
@@ -3944,8 +4073,7 @@ export class RestaurantWorldEngine {
           label: STATION_INFO[st.type].short,
           stationType: st.type,
           recipeIds,
-          pendingCount: this.orders.filter((o) => o.status === 'waiting' && RECIPES[o.recipeId].station === st.type)
-            .length,
+          pendingCount: this.allNeededDishes().filter((r) => RECIPES[r].station === st.type).length,
         });
       }
     }
@@ -3970,6 +4098,11 @@ export class RestaurantWorldEngine {
       nearbyPrompt: this.computeNearbyPrompt(),
       bubbles,
       playerPos: { x: this.playerPos.x, z: this.playerPos.z },
+      streak: {
+        count: this.streakCount,
+        mult: getStreakMult(this.streakCount),
+        timeLeft: this.streakCount > 0 ? Math.max(0, this.streakTimer / STREAK_WINDOW) : 0,
+      },
     });
   }
 

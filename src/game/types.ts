@@ -104,7 +104,13 @@ export interface CustomerOrder {
   id: string;
   customerId: string;
   tableId: number; // -1 for takeaway
+  /** The next dish still needed (= remaining[0]); kept for display and simple lookups. */
   recipeId: RecipeId;
+  /** Full combo (1–3 dishes) and the dishes not delivered yet. */
+  items: RecipeId[];
+  remaining: RecipeId[];
+  /** Sum of delivered dishes' quality (average decides the tip). */
+  qualitySum: number;
   archetype: CustomerArchetype;
   customerName: string;
   status: 'waiting' | 'cooking' | 'ready' | 'served';
@@ -290,6 +296,10 @@ export interface DayReport {
   unpaidWages: boolean;
   netProfit: number;
   staffCount: number;
+  /** Daily star rating (0–3), the served-orders goal and the cash reward for the stars. */
+  stars: number;
+  starTarget: number;
+  starReward: number;
 }
 
 export interface SaveState {
@@ -345,6 +355,37 @@ export interface SaveState {
   graphicsQuality: 'auto' | 'low' | 'medium' | 'high';
   /** Vibration feedback on supported (Android) devices. */
   hapticsEnabled: boolean;
+  /** Orders served per recipe (drives Bronze / Silver / Gold mastery). */
+  recipeMastery: Partial<Record<RecipeId, number>>;
+  /** Today's three challenges (refresh each real day). */
+  dailyChallenges: DailyChallengeState;
+  /** Lifetime stars earned from daily ratings. */
+  totalStars: number;
+}
+
+export type DailyChallengeKind =
+  | 'serve_orders'
+  | 'serve_combos'
+  | 'perfect_cooks'
+  | 'clean_tables'
+  | 'earn_cash'
+  | 'reach_streak'
+  | 'serve_recipe';
+
+export interface DailyChallenge {
+  id: string;
+  kind: DailyChallengeKind;
+  recipeId?: RecipeId;
+  target: number;
+  progress: number;
+  reward: number;
+  claimed: boolean;
+}
+
+export interface DailyChallengeState {
+  date: string | null;
+  items: DailyChallenge[];
+  bonusClaimed: boolean;
 }
 
 export interface ProjectedBubble {
@@ -417,4 +458,6 @@ export interface EngineHudSnapshot {
   nearbyPrompt: NearbyPrompt | null;
   bubbles: ProjectedBubble[];
   playerPos: { x: number; z: number };
+  /** Serving streak: orders completed in a row, tip multiplier, and time left before it cools (0..1). */
+  streak: { count: number; mult: number; timeLeft: number };
 }
