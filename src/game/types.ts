@@ -363,6 +363,8 @@ export interface ProjectedBubble {
   stationType?: StationType;
   recipeIds?: RecipeId[];
   pendingCount?: number;
+  /** World-space point the bubble follows; the HUD re-projects it every rendered frame. */
+  anchor?: { x: number; y: number; z: number };
   /** Covered machine the player hasn't unlocked yet, and the level that unlocks it. */
   locked?: boolean;
   unlockLevel?: number;
