@@ -451,6 +451,18 @@ export class RestaurantWorldEngine {
     });
   }
 
+  /** Walks the chef to a table (used by the dirty-table icon) instead of teleporting. */
+  public walkToTable(tableId: number) {
+    if (this.inVehicle || this.titleMode || this.paused) return;
+    const tbl = this.tables.find((t) => t.id === tableId);
+    if (!tbl) return;
+    // Aim for a spot beside the table (toward the player) so the Clean prompt appears on arrival
+    const dx = this.playerPos.x - tbl.x;
+    const dz = this.playerPos.z - tbl.z;
+    const len = Math.hypot(dx, dz) || 1;
+    this.setTapTarget(new THREE.Vector3(tbl.x + (dx / len) * 1.2, 0, tbl.z + (dz / len) * 1.2));
+  }
+
   /** Registers a callback that runs after every rendered frame (pass null to clear). */
   public setFrameListener(fn: (() => void) | null) {
     this.frameListener = fn;
