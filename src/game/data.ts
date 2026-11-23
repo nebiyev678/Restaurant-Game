@@ -1,6 +1,8 @@
 import {
   AchievementDef,
   CafeThemeDef,
+  CafeThemeId,
+  CuisineId,
   CityZone,
   ClothingItem,
   DailyChallenge,
@@ -25,6 +27,7 @@ import {
   StationType,
   VehicleDef,
 } from './types';
+import { createEmptyAlbum, CUISINES, getPassiveRestaurantIncomePerMin, WORLD_RECIPES } from './cuisines';
 
 export const CAFE_THEMES: CafeThemeDef[] = [
   {
@@ -167,7 +170,7 @@ export const SPECIALTY_LINES: Record<SpecialtyLineId, SpecialtyLineDef> = {
   },
 };
 
-export const RECIPES: Record<RecipeId, RecipeDef> = {
+const CLASSIC_RECIPES: Partial<Record<RecipeId, RecipeDef>> = {
   burger: {
     id: 'burger',
     name: 'Classic Burger',
@@ -413,6 +416,36 @@ export const RECIPES: Record<RecipeId, RecipeDef> = {
     description: 'Botanical blackberry-hibiscus spritz garnished with fresh citrus and mint.',
   },
 };
+
+/**
+ * The interior style actually shown: a paid cafe style if the player picked one,
+ * otherwise the current restaurant's own country look (the bistro keeps its classic style).
+ */
+export function getEffectiveTheme(save: { activeCafeThemeId?: CafeThemeId; activeCuisine?: CuisineId }): CafeThemeDef {
+  const chosen = CAFE_THEMES.find((t) => t.id === (save.activeCafeThemeId ?? 'classic_bistro')) ?? CAFE_THEMES[0];
+  const cuisine = CUISINES[save.activeCuisine ?? 'bistro'];
+  if (!cuisine || cuisine.id === 'bistro' || chosen.id !== 'classic_bistro') return chosen;
+  const p = cuisine.palette;
+  return {
+    ...chosen,
+    name: `${cuisine.name} Style`,
+    musicMood: cuisine.musicMood,
+    wallColor: p.wall,
+    wainscotColor: p.wainscot,
+    floorMode: p.floorMode,
+    floorPrimary: p.floorPrimary,
+    floorSecondary: p.floorSecondary,
+    kitchenPrimary: p.kitchenPrimary,
+    kitchenSecondary: p.kitchenSecondary,
+    trimColor: p.accent,
+    cushionColor: p.cushion,
+    woodPrimary: p.woodPrimary,
+    woodSecondary: p.woodSecondary,
+    lightColor: p.light,
+  };
+}
+
+export const RECIPES: Record<RecipeId, RecipeDef> = { ...CLASSIC_RECIPES, ...WORLD_RECIPES } as Record<RecipeId, RecipeDef>;
 
 export const RECIPE_LIST: RecipeDef[] = Object.values(RECIPES);
 
@@ -1091,6 +1124,30 @@ export const CITY_ZONES: CityZone[] = [
     z: -1.5,
     color: '#8b5cf6',
   },
+  {
+    id: 'foodstreet',
+    name: 'Food Street',
+    subtitle: 'Your earlier restaurants',
+    x: 13.6,
+    z: -31,
+    color: '#f43f5e',
+  },
+  {
+    id: 'townsquare',
+    name: 'Town Square',
+    subtitle: 'Clock tower & market',
+    x: 17.5,
+    z: -52,
+    color: '#0ea5e9',
+  },
+  {
+    id: 'park',
+    name: 'Riverside Park',
+    subtitle: 'Pond, gazebo & flowers',
+    x: 17.5,
+    z: 27,
+    color: '#22c55e',
+  },
 ];
 
 export function getRestaurantTier(level: number): {
@@ -1584,15 +1641,16 @@ export function getFranchiseIncomePerMinute(ownedFranchises: string[]): number {
 }
 
 export function computeOfflineEarnings(
-  save: Pick<SaveState, 'ownedFranchises' | 'lastSeenAt'>,
+  save: Pick<SaveState, 'ownedFranchises' | 'lastSeenAt'> & Partial<Pick<SaveState, 'ownedRestaurants' | 'restaurantLevel'>>,
   now: number = Date.now()
 ): { minutesAway: number; cappedMinutes: number; amount: number } | null {
-  if (!save.lastSeenAt || save.ownedFranchises.length === 0) return null;
+  const restaurantsPerMin = getPassiveRestaurantIncomePerMin(save.ownedRestaurants ?? [], save.restaurantLevel ?? 1);
+  if (!save.lastSeenAt || (save.ownedFranchises.length === 0 && restaurantsPerMin === 0)) return null;
   const minutesAway = Math.floor((now - save.lastSeenAt) / 60000);
   if (minutesAway < OFFLINE_MIN_MINUTES) return null;
   const cappedMinutes = Math.min(minutesAway, OFFLINE_CAP_MINUTES);
   const amount = Math.round(
-    getFranchiseIncomePerMinute(save.ownedFranchises) * cappedMinutes * OFFLINE_EFFICIENCY
+    (getFranchiseIncomePerMinute(save.ownedFranchises) + restaurantsPerMin) * cappedMinutes * OFFLINE_EFFICIENCY
   );
   if (amount <= 0) return null;
   return { minutesAway, cappedMinutes, amount };
@@ -1754,5 +1812,8 @@ export function createInitialSaveState(): SaveState {
     quickGoals: { completed: 0, current: generateQuickGoal(0, 1, ['burger', 'fries'], 'burger') },
     dailySpecial: 'burger',
     starStreak: 0,
+    activeCuisine: 'bistro',
+    ownedRestaurants: [],
+    album: createEmptyAlbum(),
   };
 }

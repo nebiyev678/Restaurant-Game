@@ -37,7 +37,65 @@ export const CAR_TRAVEL_SPOTS: Record<string, { x: number; z: number }> = {
   dealership: { x: 18.8, z: -8.5 },
   bank: { x: 18.8, z: 8.5 },
   home: { x: 33.5, z: 0 },
+  foodstreet: { x: 17.5, z: -30 },
+  townsquare: { x: 17.5, z: -47 },
+  park: { x: 17.5, z: 20 },
 };
+
+/** Walkable / drivable extent of the whole town. */
+export const TOWN_BOUNDS = { minX: -27.4, maxX: 60, minZ: -64, maxZ: 53 } as const;
+
+/** Food Street: the north avenue and its four restaurant plots (your earlier restaurants move here). */
+export const FOOD_STREET = {
+  road: { x: 17.5, halfW: 2.8, minZ: -50, maxZ: -18 },
+  /** Plot centres; `yaw` turns the shop front (+z) to face the avenue. */
+  plots: [
+    { x: 9.35, z: -27.5, yaw: Math.PI / 2 },
+    { x: 25.65, z: -27.5, yaw: -Math.PI / 2 },
+    { x: 9.35, z: -40.5, yaw: Math.PI / 2 },
+    { x: 25.65, z: -40.5, yaw: -Math.PI / 2 },
+  ],
+  plotWidth: 7.8,
+  plotDepth: 6.4,
+  square: { minX: 5, maxX: 30, minZ: -63, maxZ: -50 },
+  clockTower: { x: 17.5, z: -60.2 },
+} as const;
+
+/** Riverside park south of the customer parking street. */
+export const TOWN_PARK = {
+  pond: { x: 31, z: 39, rx: 6.5, rz: 4.2 },
+  gazebo: { x: 5, z: 38 },
+} as const;
+
+/** Canal west of the restaurant, crossed by two footbridges. */
+export const TOWN_CANAL = { minX: -24, maxX: -19.6, minZ: -63, maxZ: 52, bridges: [0, -35], bridgeHalf: 1.6 } as const;
+
+const EXTRA_TREES: [number, number][] = [
+  // Food Street & square
+  [13.2, -22.5], [21.8, -22.5], [13.2, -34], [21.8, -34], [13.2, -46.5], [21.8, -46.5],
+  [6.4, -51.6], [28.6, -51.6], [6.2, -62], [28.8, -62],
+  // Lawn between the canal and Food Street
+  [-12, -22], [-6, -27], [-13, -33], [-4, -40], [-11, -46], [-3, -54], [-12, -58],
+  // Park
+  [-5, 27.5], [2, 32], [-4, 44], [10, 45.5], [13.5, 33], [22, 46.5], [25, 30.5], [40, 31], [44, 44.5], [38, 48],
+  [47, 27.5], [-6, 50], [6, 50.5], [52, 36],
+  // Canal promenade
+  [-17.2, -12], [-17.2, -26], [-17.2, -44], [-17.2, 28], [-17.2, 42], [-26.2, -18], [-26.2, 14], [-26.2, 34],
+];
+
+const EXTRA_LANTERNS: [number, number][] = [
+  [13.6, -24.6], [21.4, -24.6], [13.6, -37.2], [21.4, -37.2], [13.6, -48.6], [21.4, -48.6],
+  [5.6, -56.5], [29.4, -56.5],
+  [17.5, 26.6], [5.5, 30.4], [29.5, 30.4], [43, 30.4], [-3, 30.4],
+  [-17.4, -3.2], [-17.4, 3.2], [-26.2, -3.2], [-26.2, 3.2], [-17.4, -32], [-26.2, -38],
+];
+
+const EXTRA_BENCHES: [number, number, number][] = [
+  [12.4, -53.2, 0], [22.6, -53.2, 0],
+  [10, 29, Math.PI], [24.5, 29, Math.PI], [36, 29, Math.PI],
+  [31, 33.9, Math.PI], [31, 44.2, 0],
+  [-17.3, -7, Math.PI / 2], [-17.3, 8, Math.PI / 2],
+];
 
 // ---------------------------------------------------------------------------
 // Procedural canvas textures
@@ -323,6 +381,63 @@ function textured(base: THREE.Texture, repeatX: number, repeatY: number) {
   return t;
 }
 
+
+/** Roman-numeral clock face for the town-square tower. */
+function createClockFaceTexture() {
+  const { c, ctx } = makeCanvas(256, 256);
+  ctx.fillStyle = '#fbf6ea';
+  ctx.beginPath();
+  ctx.arc(128, 128, 124, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineWidth = 10;
+  ctx.strokeStyle = '#2b2522';
+  ctx.stroke();
+  ctx.fillStyle = '#2b2522';
+  ctx.font = 'bold 26px Georgia, serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const numerals = ['XII', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI'];
+  numerals.forEach((n, i) => {
+    const a = (i / 12) * Math.PI * 2 - Math.PI / 2;
+    ctx.fillText(n, 128 + Math.cos(a) * 92, 128 + Math.sin(a) * 92);
+  });
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 9;
+  ctx.beginPath();
+  ctx.moveTo(128, 128);
+  ctx.lineTo(128 + 48, 128 - 28);
+  ctx.stroke();
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(128, 128);
+  ctx.lineTo(128 - 12, 128 - 78);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(128, 128, 9, 0, Math.PI * 2);
+  ctx.fill();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/** Small low-poly duck that paddles around the park pond. */
+function createDuck(bodyColor: string) {
+  const duck = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.6 }));
+  body.scale.set(1.3, 0.75, 0.9);
+  body.position.y = 0.08;
+  const head = new THREE.Mesh(
+    new THREE.SphereGeometry(0.1, 10, 8),
+    new THREE.MeshStandardMaterial({ color: bodyColor === '#f8fafc' ? '#f8fafc' : '#166534', roughness: 0.5 })
+  );
+  head.position.set(0.2, 0.25, 0);
+  const beak = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.1, 6), new THREE.MeshStandardMaterial({ color: '#f59e0b', roughness: 0.5 }));
+  beak.rotation.z = -Math.PI / 2;
+  beak.position.set(0.32, 0.24, 0);
+  duck.add(body, head, beak);
+  return duck;
+}
+
 // ---------------------------------------------------------------------------
 // Old town exterior
 // ---------------------------------------------------------------------------
@@ -340,6 +455,9 @@ export class OldTownExterior {
   private fountainWater!: THREE.Mesh;
   private night = 0;
   private time = 0;
+  private clockMat: THREE.MeshStandardMaterial | null = null;
+  private pondWater: THREE.Mesh | null = null;
+  private ducks: THREE.Group[] = [];
 
   build(maxAniso: number): OldTownBuildResult {
     const colliders: WorldCollider[] = [];
@@ -352,7 +470,10 @@ export class OldTownExterior {
     this.buildBenches(colliders);
     this.buildPlantersAndBollards(colliders);
     this.buildParkingProps(colliders);
-    this.buildSkyline();
+    this.buildNorthDistrict(colliders, maxAniso);
+    this.buildPark(colliders, maxAniso);
+    this.buildCanal(colliders, maxAniso);
+    this.buildSkyline(colliders);
     return { colliders, lanternMats };
   }
 
@@ -368,6 +489,15 @@ export class OldTownExterior {
       (this.fountainWater.material as THREE.MeshStandardMaterial).emissiveIntensity =
         0.12 + Math.sin(this.time * 1.7) * 0.04 + this.night * 0.25;
     }
+    // Clock faces glow after dark; ducks paddle lazy ellipses around the pond
+    if (this.clockMat) this.clockMat.emissiveIntensity = this.night * 0.7;
+    const P = TOWN_PARK.pond;
+    this.ducks.forEach((duck, i) => {
+      const a = this.time * (0.12 + i * 0.03) + i * 2.1;
+      const r = 0.55 + i * 0.12;
+      duck.position.set(P.x + Math.cos(a) * P.rx * r, 0.03 + Math.sin(this.time * 2 + i) * 0.01, P.z + Math.sin(a) * P.rz * r);
+      duck.rotation.y = -a - Math.PI / 2;
+    });
   }
 
   // -- Ground: sidewalks, piazza, roads, roundabout, courtyard, markings ------
@@ -677,6 +807,7 @@ export class OldTownExterior {
   // -- Cast-iron lanterns + ground light pools ----------------------------------
   private buildLanterns(colliders: WorldCollider[]): THREE.MeshStandardMaterial {
     const spots: [number, number][] = [
+      ...EXTRA_LANTERNS,
       [11.9, 7.7],
       [11.9, -7.7],
       [13.3, 5.3],
@@ -738,6 +869,7 @@ export class OldTownExterior {
   // -- Plane trees in iron grates (instanced) ----------------------------------
   private buildTrees(colliders: WorldCollider[]) {
     const spots: [number, number][] = [
+      ...EXTRA_TREES,
       [27.0, 7.4],
       [35.5, 7.4],
       [40.5, 7.4],
@@ -815,6 +947,7 @@ export class OldTownExterior {
       [7.6, 8.1, Math.PI],
       [7.6, -8.1, 0],
       [38.0, 5.5, Math.PI],
+      ...EXTRA_BENCHES,
     ];
     const wood = mergeGeometries([
       new THREE.BoxGeometry(1.6, 0.06, 0.42).translate(0, 0.45, 0), // seat
@@ -950,22 +1083,391 @@ export class OldTownExterior {
   }
 
   // -- Gabled old-town skyline with lit windows at night -----------------------
-  private buildSkyline() {
+  // -- Food Street avenue + Town Square with clock tower and market stalls -------
+  private buildNorthDistrict(colliders: WorldCollider[], aniso: number) {
+    const g = this.group;
+    const F = FOOD_STREET;
+    const sand = createSandstoneTexture(aniso);
+    const sandMat = (w: number, d: number) =>
+      new THREE.MeshStandardMaterial({ map: textured(sand, w / 3, d / 3), roughness: 0.9 });
+
+    // Sidewalks over the whole district (alleys behind the plots included)
+    g.add(flatPlane(36.2, 45, sandMat(36.2, 45), 15.4, 0.008, -43.5));
+
+    // Granite-sett avenue continuing north from the roundabout road
+    const setts = createSettsTexture(aniso);
+    const len = F.road.maxZ - F.road.minZ;
+    g.add(
+      flatPlane(
+        F.road.halfW * 2,
+        len,
+        new THREE.MeshStandardMaterial({ map: textured(setts, F.road.halfW, len / 2), roughness: 0.86 }),
+        F.road.x,
+        0.02,
+        (F.road.minZ + F.road.maxZ) / 2
+      )
+    );
+    // Kerbs along both sides of the avenue
+    const kerbMats: THREE.Matrix4[] = [];
+    for (const xs of [-1, 1]) {
+      for (let z = F.road.minZ + 0.5; z < F.road.maxZ; z += 1) {
+        kerbMats.push(compose(F.road.x + xs * (F.road.halfW + 0.11), 0.045, z, Math.PI / 2, 0.98, 1, 1).clone());
+      }
+    }
+    const kerbs = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1, 0.09, 0.22),
+      new THREE.MeshStandardMaterial({ color: '#cfc8bb', roughness: 0.8 }),
+      kerbMats.length
+    );
+    kerbMats.forEach((m, i) => kerbs.setMatrixAt(i, m));
+    kerbs.receiveShadow = true;
+    g.add(kerbs);
+
+    // Fan-cobbled Town Square
+    const sq = F.square;
+    const sw = sq.maxX - sq.minX;
+    const sd = sq.maxZ - sq.minZ;
+    g.add(
+      flatPlane(
+        sw,
+        sd,
+        new THREE.MeshStandardMaterial({ map: textured(createFanCobbleTexture(aniso), sw / 2.4, sd / 2.4), roughness: 0.88 }),
+        (sq.minX + sq.maxX) / 2,
+        0.014,
+        (sq.minZ + sq.maxZ) / 2
+      )
+    );
+
+    // Clock tower closing the north end of the square
+    const ct = F.clockTower;
+    const stone = new THREE.MeshStandardMaterial({ color: '#e5d2ae', roughness: 0.85 });
+    const trim = new THREE.MeshStandardMaterial({ color: '#c9b38c', roughness: 0.8 });
+    const copper = new THREE.MeshStandardMaterial({ color: '#4f8f7c', roughness: 0.55, metalness: 0.25 });
+    const tower = new THREE.Group();
+    const plinth = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.8, 3.6), trim);
+    plinth.position.y = 0.4;
+    const shaft = new THREE.Mesh(new THREE.BoxGeometry(2.9, 8.2, 2.9), stone);
+    shaft.position.y = 4.9;
+    const cornice = new THREE.Mesh(new THREE.BoxGeometry(3.3, 0.35, 3.3), trim);
+    cornice.position.y = 9.15;
+    const belfry = new THREE.Mesh(new THREE.BoxGeometry(2.5, 1.9, 2.5), new THREE.MeshStandardMaterial({ color: '#3a2f27', roughness: 0.9 }));
+    belfry.position.y = 10.25;
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(2.45, 3.2, 4), copper);
+    roof.rotation.y = Math.PI / 4;
+    roof.position.y = 12.8;
+    const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.06, 1.2, 6), new THREE.MeshStandardMaterial({ color: '#d4a017', metalness: 0.8, roughness: 0.3 }));
+    spire.position.y = 15;
+    tower.add(plinth, shaft, cornice, belfry, roof, spire);
+    for (const [dx, dz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.42, 1.9, 0.42), stone);
+      post.position.set(dx * 1.25, 10.25, dz * 1.25);
+      tower.add(post);
+    }
+    // Door at the foot of the tower
+    const door = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.9, 0.08), new THREE.MeshStandardMaterial({ color: '#5b3a22', roughness: 0.7 }));
+    door.position.set(0, 1.75, 1.47);
+    tower.add(door);
+    const clockTex = createClockFaceTexture();
+    const clockMat = new THREE.MeshStandardMaterial({ map: clockTex, roughness: 0.5, emissive: '#fff4d6', emissiveMap: clockTex, emissiveIntensity: 0 });
+    this.clockMat = clockMat;
+    for (let k = 0; k < 4; k++) {
+      const face = new THREE.Mesh(new THREE.CircleGeometry(0.95, 32), clockMat);
+      const a = (k * Math.PI) / 2;
+      face.position.set(Math.sin(a) * 1.47, 7.2, Math.cos(a) * 1.47);
+      face.rotation.y = a;
+      tower.add(face);
+    }
+    tower.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).castShadow = true;
+    });
+    tower.position.set(ct.x, 0, ct.z);
+    g.add(tower);
+    colliders.push({ kind: 'aabb', minX: ct.x - 1.8, maxX: ct.x + 1.8, minZ: ct.z - 1.8, maxZ: ct.z + 1.8 });
+
+    // Market stalls along the square's sides
+    const stalls: { x: number; z: number; yaw: number; a: string; b: string }[] = [
+      { x: 8.6, z: -54.6, yaw: Math.PI / 2, a: '#dc2626', b: '#fef3c7' },
+      { x: 8.6, z: -59.2, yaw: Math.PI / 2, a: '#2563eb', b: '#f8fafc' },
+      { x: 26.4, z: -54.6, yaw: -Math.PI / 2, a: '#16a34a', b: '#fefce8' },
+      { x: 26.4, z: -59.2, yaw: -Math.PI / 2, a: '#ea580c', b: '#fff7ed' },
+    ];
+    const woodMat = new THREE.MeshStandardMaterial({ color: '#8b5a2b', roughness: 0.8 });
+    const produceColors = ['#ef4444', '#f97316', '#facc15', '#84cc16', '#a855f7', '#22c55e'];
+    const produce = new THREE.InstancedMesh(new THREE.SphereGeometry(0.11, 8, 6), new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.6 }), stalls.length * 18);
+    let pi = 0;
+    const frameGeo = mergeGeometries([
+      new THREE.BoxGeometry(2.4, 0.85, 1.1).translate(0, 0.425, 0),
+      ...[[-1.15, -0.5], [1.15, -0.5], [-1.15, 0.5], [1.15, 0.5]].map(([px, pz]) =>
+        new THREE.CylinderGeometry(0.04, 0.04, 2.2, 6).translate(px, 1.1, pz)
+      ),
+    ])!;
+    const slatGeo = (odd: boolean) =>
+      mergeGeometries(
+        [0, 1, 2, 3, 4, 5]
+          .filter((i) => (i % 2 === 1) === odd)
+          .map((i) => new THREE.BoxGeometry(0.42, 0.05, 1.5).rotateX(0.18).translate(-1.05 + i * 0.42, 2.25, 0.1))
+      )!;
+    const slatsA = slatGeo(false);
+    const slatsB = slatGeo(true);
+    for (const st of stalls) {
+      const stall = new THREE.Group();
+      stall.add(new THREE.Mesh(frameGeo, woodMat));
+      stall.add(new THREE.Mesh(slatsA, new THREE.MeshStandardMaterial({ color: st.a, roughness: 0.7 })));
+      stall.add(new THREE.Mesh(slatsB, new THREE.MeshStandardMaterial({ color: st.b, roughness: 0.7 })));
+      stall.traverse((o) => {
+        if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).castShadow = true;
+      });
+      stall.position.set(st.x, 0, st.z);
+      stall.rotation.y = st.yaw;
+      g.add(stall);
+      // Produce piles on the table (world space)
+      const c = Math.cos(st.yaw);
+      const sn = Math.sin(st.yaw);
+      for (let k = 0; k < 18; k++) {
+        const lx = -0.95 + (k % 9) * 0.24;
+        const lz = -0.22 + Math.floor(k / 9) * 0.3;
+        produce.setMatrixAt(pi, compose(st.x + lx * c + lz * sn, 0.95, st.z - lx * sn + lz * c));
+        produce.setColorAt(pi, _col.set(produceColors[(Math.floor(k / 3) + pi) % produceColors.length]));
+        pi++;
+      }
+      const sideways = Math.abs(sn) > 0.5;
+      colliders.push({
+        kind: 'aabb',
+        minX: st.x - (sideways ? 0.6 : 1.25),
+        maxX: st.x + (sideways ? 0.6 : 1.25),
+        minZ: st.z - (sideways ? 1.25 : 0.6),
+        maxZ: st.z + (sideways ? 1.25 : 0.6),
+      });
+    }
+    produce.castShadow = true;
+    g.add(produce);
+  }
+
+  // -- Riverside park: paths, pond with ducks, gazebo and flower beds ----------
+  private buildPark(colliders: WorldCollider[], aniso: number) {
+    const g = this.group;
+    const sand = createSandstoneTexture(aniso);
+    // Pavement along the south side of the parking street
+    g.add(
+      flatPlane(66.6, 2.6, new THREE.MeshStandardMaterial({ map: textured(sand, 22, 0.9), roughness: 0.9 }), 24.7, 0.008, 23.5)
+    );
+    // Gravel paths
+    const gravel = new THREE.MeshStandardMaterial({ color: '#d8c59c', roughness: 0.95 });
+    g.add(flatPlane(62, 2.4, gravel, 23, 0.012, 30.4));
+    g.add(flatPlane(2.4, 29, gravel, 17.5, 0.012, 39.3));
+    g.add(flatPlane(2.4, 13.5, gravel, 5, 0.012, 37.2));
+    const P = TOWN_PARK.pond;
+    const ringPath = new THREE.Mesh(new THREE.RingGeometry(1.0, 1.32, 48), gravel);
+    ringPath.rotation.x = -Math.PI / 2;
+    ringPath.scale.set(P.rx + 0.4, P.rz + 0.4, 1);
+    ringPath.position.set(P.x, 0.012, P.z);
+    ringPath.receiveShadow = true;
+    g.add(ringPath);
+
+    // Pond with a stone rim, lily pads and three ducks
+    const water = new THREE.Mesh(
+      new THREE.CircleGeometry(1, 48),
+      new THREE.MeshStandardMaterial({ color: '#5aa6c8', roughness: 0.12, metalness: 0.15 })
+    );
+    water.rotation.x = -Math.PI / 2;
+    water.scale.set(P.rx, P.rz, 1);
+    water.position.set(P.x, 0.02, P.z);
+    g.add(water);
+    this.pondWater = water;
+    const rim = new THREE.Mesh(new THREE.RingGeometry(1.0, 1.07, 48), new THREE.MeshStandardMaterial({ color: '#bfb39b', roughness: 0.85 }));
+    rim.rotation.x = -Math.PI / 2;
+    rim.scale.set(P.rx, P.rz, 1);
+    rim.position.set(P.x, 0.05, P.z);
+    g.add(rim);
+    const pad = new THREE.MeshStandardMaterial({ color: '#3f7d3a', roughness: 0.7 });
+    for (const [dx, dz] of [[-3.5, 1.2], [-2.6, -1.6], [3.8, 1.8], [2.2, -2.2], [-4.6, -0.4]]) {
+      const lily = new THREE.Mesh(new THREE.CircleGeometry(0.35, 12, 0.3, Math.PI * 1.8), pad);
+      lily.rotation.x = -Math.PI / 2;
+      lily.position.set(P.x + dx, 0.03, P.z + dz);
+      g.add(lily);
+    }
+    this.ducks = [];
+    for (let i = 0; i < 3; i++) {
+      const duck = createDuck(i === 0 ? '#f8fafc' : '#8b6b4a');
+      duck.position.set(P.x, 0.03, P.z);
+      g.add(duck);
+      this.ducks.push(duck);
+    }
+    colliders.push(
+      { kind: 'circle', x: P.x - 3, z: P.z, r: 3.7 },
+      { kind: 'circle', x: P.x, z: P.z, r: 4.1 },
+      { kind: 'circle', x: P.x + 3, z: P.z, r: 3.7 }
+    );
+
+    // Octagonal gazebo
+    const gz = TOWN_PARK.gazebo;
+    const white = new THREE.MeshStandardMaterial({ color: '#f5f1e8', roughness: 0.6 });
+    const gazebo = new THREE.Group();
+    const floor = new THREE.Mesh(new THREE.CylinderGeometry(2.7, 2.8, 0.22, 8), new THREE.MeshStandardMaterial({ color: '#cdb892', roughness: 0.8 }));
+    floor.position.y = 0.11;
+    gazebo.add(floor);
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2 + Math.PI / 8;
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 2.5, 8), white);
+      post.position.set(Math.cos(a) * 2.4, 1.45, Math.sin(a) * 2.4);
+      gazebo.add(post);
+      colliders.push({ kind: 'circle', x: gz.x + Math.cos(a) * 2.4, z: gz.z + Math.sin(a) * 2.4, r: 0.14 });
+    }
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, 0.2, 8, 1, true), white);
+    (beam.material as THREE.MeshStandardMaterial).side = THREE.DoubleSide;
+    beam.position.y = 2.75;
+    const groof = new THREE.Mesh(new THREE.ConeGeometry(3.1, 1.6, 8), new THREE.MeshStandardMaterial({ color: '#4f8f7c', roughness: 0.6 }));
+    groof.position.y = 3.65;
+    const finial = new THREE.Mesh(new THREE.SphereGeometry(0.14, 10, 8), new THREE.MeshStandardMaterial({ color: '#d4a017', metalness: 0.7, roughness: 0.3 }));
+    finial.position.y = 4.55;
+    gazebo.add(beam, groof, finial);
+    gazebo.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).castShadow = true;
+    });
+    gazebo.position.set(gz.x, 0, gz.z);
+    g.add(gazebo);
+
+    // Flower beds
+    const beds: [number, number][] = [[11.5, 36.5], [23.5, 42], [41.5, 38], [-1.5, 37.5], [28, 49.5]];
+    const soil = new THREE.MeshStandardMaterial({ color: '#5a3d26', roughness: 1 });
+    const blooms = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.16, 0), new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.6 }), beds.length * 22);
+    const bloomColors = ['#e11d48', '#f59e0b', '#f472b6', '#fde047', '#a855f7', '#ffffff', '#5e8f45'];
+    let bi = 0;
+    for (const [bx, bz] of beds) {
+      const bed = new THREE.Mesh(new THREE.CircleGeometry(1, 24), soil);
+      bed.rotation.x = -Math.PI / 2;
+      bed.scale.set(1.9, 1.2, 1);
+      bed.position.set(bx, 0.03, bz);
+      g.add(bed);
+      for (let k = 0; k < 22; k++) {
+        const a = k * 2.4;
+        const r = Math.sqrt((k + 0.5) / 22);
+        blooms.setMatrixAt(bi, compose(bx + Math.cos(a) * r * 1.6, 0.16 + (k % 3) * 0.05, bz + Math.sin(a) * r * 1.0));
+        blooms.setColorAt(bi, _col.set(bloomColors[(k + bi) % bloomColors.length]));
+        bi++;
+      }
+      colliders.push({ kind: 'circle', x: bx, z: bz, r: 1.1 });
+    }
+    blooms.castShadow = true;
+    g.add(blooms);
+  }
+
+  // -- Canal west of the restaurant with two arched footbridges ----------------
+  private buildCanal(colliders: WorldCollider[], aniso: number) {
+    const g = this.group;
+    const C = TOWN_CANAL;
+    const len = C.maxZ - C.minZ;
+    const midZ = (C.minZ + C.maxZ) / 2;
+    const sand = createSandstoneTexture(aniso);
+    // Promenades on both banks
+    for (const [x0, x1] of [[-27.6, -24], [C.maxX, -16]] as const) {
+      const w = x1 - x0;
+      g.add(flatPlane(w, len, new THREE.MeshStandardMaterial({ map: textured(sand, w / 3, len / 3), roughness: 0.9 }), (x0 + x1) / 2, 0.009, midZ));
+    }
+    const water = new THREE.Mesh(
+      new THREE.PlaneGeometry(C.maxX - C.minX, len),
+      new THREE.MeshStandardMaterial({ color: '#3f88a8', roughness: 0.1, metalness: 0.2 })
+    );
+    water.rotation.x = -Math.PI / 2;
+    water.position.set((C.minX + C.maxX) / 2, 0.016, midZ);
+    g.add(water);
+    // Stone coping along both edges
+    const copeMat = new THREE.MeshStandardMaterial({ color: '#c8bca4', roughness: 0.85 });
+    for (const x of [C.minX, C.maxX]) {
+      const cope = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.18, len), copeMat);
+      cope.position.set(x, 0.09, midZ);
+      cope.receiveShadow = true;
+      g.add(cope);
+    }
+    // Footbridges: arched stone with parapets
+    const deckMat = new THREE.MeshStandardMaterial({ color: '#d6c7a8', roughness: 0.85 });
+    const span = C.maxX - C.minX + 1.4;
+    for (const bz of C.bridges) {
+      const bridge = new THREE.Group();
+      const deck = new THREE.Mesh(new THREE.BoxGeometry(span, 0.2, C.bridgeHalf * 2), deckMat);
+      deck.position.y = 0.14;
+      bridge.add(deck);
+      const arch = new THREE.Mesh(new THREE.TorusGeometry(span / 2 - 0.2, 0.28, 6, 18, Math.PI), copeMat);
+      arch.position.y = -span / 2 + 0.6;
+      for (const side of [-1, 1]) {
+        const a = arch.clone();
+        a.position.z = side * (C.bridgeHalf - 0.05);
+        bridge.add(a);
+        const parapet = new THREE.Mesh(new THREE.BoxGeometry(span, 0.6, 0.22), copeMat);
+        parapet.position.set(0, 0.5, side * (C.bridgeHalf - 0.11));
+        bridge.add(parapet);
+      }
+      bridge.traverse((o) => {
+        if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).castShadow = true;
+      });
+      bridge.position.set((C.minX + C.maxX) / 2, 0, bz);
+      g.add(bridge);
+      for (const side of [-1, 1]) {
+        const pz = bz + side * (C.bridgeHalf - 0.11);
+        colliders.push({ kind: 'aabb', minX: C.minX - 0.7, maxX: C.maxX + 0.7, minZ: pz - 0.12, maxZ: pz + 0.12 });
+      }
+    }
+    // Water is off-limits except over the bridges
+    const gaps = C.bridges.map((b) => [b - C.bridgeHalf + 0.25, b + C.bridgeHalf - 0.25] as const).sort((a, b) => a[0] - b[0]);
+    let z0: number = C.minZ;
+    for (const [a, b] of gaps) {
+      colliders.push({ kind: 'aabb', minX: C.minX - 0.15, maxX: C.maxX + 0.15, minZ: z0, maxZ: a });
+      z0 = b;
+    }
+    colliders.push({ kind: 'aabb', minX: C.minX - 0.15, maxX: C.maxX + 0.15, minZ: z0, maxZ: C.maxZ });
+  }
+
+  private buildSkyline(colliders: WorldCollider[]) {
     const houses: { x: number; z: number; w: number; h: number; d: number; yaw: number }[] = [];
     const rnd = seeded(101);
-    // North row (fronts face +z)
-    let x = -28;
-    while (x < 52) {
-      const w = 4.2 + rnd() * 2.6;
-      houses.push({ x: x + w / 2, z: -31 - rnd() * 1.5, w, h: 6.5 + rnd() * 4, d: 5, yaw: 0 });
-      x += w + 0.15;
-    }
-    // West row (fronts face +x)
-    let z = -27;
-    while (z < 26) {
-      const w = 4.2 + rnd() * 2.6;
-      houses.push({ x: -29 - rnd() * 1.5, z: z + w / 2, w, h: 6 + rnd() * 4, d: 5, yaw: Math.PI / 2 });
-      z += w + 0.15;
+    /** A terrace of houses along one line; `skip` leaves lanes open (in the row's own axis). */
+    const row = (
+      axis: 'x' | 'z',
+      fixed: number,
+      from: number,
+      to: number,
+      yaw: number,
+      jitterSign: number,
+      skip: [number, number][] = [],
+      minH = 6,
+      maxH = 10
+    ) => {
+      let t = from;
+      while (t < to) {
+        const w = 4.2 + rnd() * 2.6;
+        const mid = t + w / 2;
+        if (skip.some(([a, b]) => mid + w / 2 > a && mid - w / 2 < b)) {
+          t += 1;
+          continue;
+        }
+        if (mid + w / 2 > to) break;
+        const off = jitterSign * rnd() * 1.2;
+        const h = minH + rnd() * (maxH - minH);
+        if (axis === 'x') houses.push({ x: mid, z: fixed + off, w, h, d: 5, yaw });
+        else houses.push({ x: fixed + off, z: mid, w, h, d: 5, yaw });
+        t += w + 0.15;
+      }
+    };
+    // Town edge: north behind the square, east past the home, south past the park
+    row('x', -69, -30, 62, 0, -1, [], 7, 11);
+    row('z', 63.5, -21, 56, -Math.PI / 2, 1);
+    row('x', 57.5, -30, 62, Math.PI, 1);
+    // West quarter across the canal (lanes at both footbridges)
+    row('z', -30.5, -66, 56, Math.PI / 2, -1, [
+      [-3.2, 3.2],
+      [-38.2, -31.8],
+    ]);
+    // Behind Food Street: alleys run between these houses and the restaurant plots
+    row('z', 35.5, -66, -21, -Math.PI / 2, 1);
+    row('z', 0.2, -48, -21, -Math.PI / 2, -1, [], 5.5, 8);
+    // North-east block between Food Street and the home
+    row('x', -19.5, 38, 62, Math.PI, -1, [], 5.5, 8.5);
+
+    for (const hs of houses) {
+      const sideways = Math.abs(Math.sin(hs.yaw)) > 0.5;
+      const hx = (sideways ? hs.d : hs.w) / 2;
+      const hz = (sideways ? hs.w : hs.d) / 2;
+      colliders.push({ kind: 'aabb', minX: hs.x - hx, maxX: hs.x + hx, minZ: hs.z - hz, maxZ: hs.z + hz });
     }
 
     const bodyColors = ['#f2d7b6', '#e9b9a0', '#f6e7c1', '#cfe0d1', '#e8d1e0', '#d7e3ef', '#f1c9a5', '#e4d4b0'];

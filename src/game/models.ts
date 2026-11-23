@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { addWorldDish } from './worldDishes';
 import {
   CafeThemeDef,
   ClothingItem,
@@ -1772,6 +1773,9 @@ export function createDishMesh(recipeId: RecipeId): THREE.Group {
   plate.position.y = 0.022;
   plate.receiveShadow = true;
   group.add(plate);
+
+  // Country-restaurant dishes (Italy, Japan, Mexico, Azerbaijan)
+  if (addWorldDish(recipeId, group)) return group;
 
   if (recipeId === 'burger' || recipeId === 'sandwich') {
     const bunMat = new THREE.MeshStandardMaterial({ color: '#d97706', roughness: 0.6 });

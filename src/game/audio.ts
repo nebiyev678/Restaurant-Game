@@ -78,6 +78,64 @@ const MOOD_CONFIGS: Record<CafeMusicMood, MoodConfig> = {
     leadWave: 'triangle',
     chordWave: 'sine',
   },
+  // Trattoria: lively tarantella-style 6/8 in A minor
+  italian: {
+    stepMs: 230,
+    isWaltz: true,
+    chords: [
+      [220.0, 261.63, 329.63, 440.0], // Am
+      [293.66, 349.23, 440.0, 587.33], // Dm
+      [329.63, 415.3, 493.88, 587.33], // E7
+      [220.0, 261.63, 329.63, 440.0], // Am
+    ],
+    bass: [110.0, 146.83, 164.81, 110.0],
+    melodyScale: [440.0, 493.88, 523.25, 587.33, 659.25, 698.46, 830.61, 880.0],
+    leadWave: 'triangle',
+    chordWave: 'triangle',
+  },
+  // Ramen house: calm hirajoshi pentatonic
+  japanese: {
+    stepMs: 380,
+    chords: [
+      [293.66, 440.0, 587.33, 698.46], // D5 add m3
+      [233.08, 349.23, 466.16, 587.33], // Bb
+      [220.0, 329.63, 440.0, 523.25], // Am
+      [293.66, 440.0, 587.33, 659.25], // D sus
+    ],
+    bass: [146.83, 116.54, 110.0, 146.83],
+    melodyScale: [587.33, 659.25, 698.46, 880.0, 932.33, 1174.66],
+    leadWave: 'sine',
+    chordWave: 'sine',
+  },
+  // Taqueria: bright mariachi-style waltz in C
+  mexican: {
+    stepMs: 250,
+    isWaltz: true,
+    chords: [
+      [261.63, 329.63, 392.0, 523.25], // C
+      [349.23, 440.0, 523.25, 698.46], // F
+      [392.0, 493.88, 587.33, 698.46], // G7
+      [261.63, 329.63, 392.0, 523.25], // C
+    ],
+    bass: [130.81, 174.61, 196.0, 130.81],
+    melodyScale: [523.25, 587.33, 659.25, 698.46, 783.99, 880.0, 1046.5],
+    leadWave: 'triangle',
+    chordWave: 'triangle',
+  },
+  // Caravanserai: Shur/Segah-flavoured mode with an augmented second
+  azeri: {
+    stepMs: 300,
+    chords: [
+      [293.66, 349.23, 440.0, 587.33], // Dm
+      [196.0, 233.08, 293.66, 392.0], // Gm
+      [220.0, 277.18, 329.63, 392.0], // A7
+      [293.66, 349.23, 440.0, 587.33], // Dm
+    ],
+    bass: [146.83, 98.0, 110.0, 146.83],
+    melodyScale: [587.33, 622.25, 739.99, 783.99, 880.0, 932.33, 1046.5, 1174.66],
+    leadWave: 'triangle',
+    chordWave: 'sine',
+  },
 };
 
 const MELODY_PATTERNS: number[][] = [

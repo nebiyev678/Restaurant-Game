@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { CUISINES, CUISINE_ORDER, getPassiveRestaurantIncomePerMin } from '../game/cuisines';
 import {
   Award,
   Gift,
@@ -97,6 +98,7 @@ interface ManagementDrawersProps {
   onToggleHaptics: () => void;
   onResetSave: () => void;
   onAdvanceTimeOfDay: () => void;
+  onOpenGrandOpening: () => void;
 }
 
 export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
@@ -132,6 +134,7 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
   onToggleHaptics,
   onResetSave,
   onAdvanceTimeOfDay,
+  onOpenGrandOpening,
 }) => {
   const [restaurantSub, setRestaurantSub] = useState<'equipment' | 'themes'>('equipment');
   const [lifestyleSub, setLifestyleSub] = useState<'clothing' | 'cars' | 'housing'>('clothing');
@@ -189,7 +192,7 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
       case 'restaurantLevel':
         return save.restaurantLevel;
       case 'recipesUnlocked':
-        return save.unlockedRecipes.length;
+        return CUISINES[save.activeCuisine ?? 'bistro'].menu.filter((r) => save.unlockedRecipes.includes(r)).length;
       default:
         return 0;
     }
@@ -239,6 +242,7 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
           {/* RESTAURANT, EQUIPMENT & CAFE STYLE THEMES */}
           {activeTab === 'restaurant' && (
             <>
+              <RestaurantChainCard save={save} onOpenGrandOpening={onOpenGrandOpening} />
               <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-900 border border-slate-800">
                 <button
                   onClick={() => setRestaurantSub('equipment')}
@@ -375,6 +379,10 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                         tea: 'Serene Tea Garden',
                         lofi: 'Espresso Lo-Fi Chill',
                         royal: 'Grand Salon Harp',
+                        italian: 'Tarantella Mandolin',
+                        japanese: 'Koto Garden',
+                        mexican: 'Mariachi Fiesta',
+                        azeri: 'Mugham Strings',
                       };
 
                       return (
@@ -615,7 +623,7 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
 
               {/* Filtered Recipes Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {RECIPE_LIST.filter((r) => {
+                {RECIPE_LIST.filter((r) => CUISINES[save.activeCuisine ?? 'bistro'].menu.includes(r.id)).filter((r) => {
                   if (kitchenSub === 'classic') return !r.recipeLine;
                   if (kitchenSub === 'specialty') return r.station === 'specialty';
                   if (kitchenSub === 'desserts') return r.recipeLine === 'desserts';
@@ -1590,6 +1598,78 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
           )}
         </div>
       </div>
+    </div>
+  );
+};
+
+
+/** The restaurant chain: where you are, what's next, and the old places still earning in town. */
+const RestaurantChainCard: React.FC<{ save: SaveState; onOpenGrandOpening: () => void }> = ({ save, onOpenGrandOpening }) => {
+  const current = CUISINES[save.activeCuisine ?? 'bistro'];
+  const idx = CUISINE_ORDER.indexOf(current.id);
+  const next = CUISINE_ORDER[idx + 1] ? CUISINES[CUISINE_ORDER[idx + 1]] : null;
+  const ready = !!next && save.restaurantLevel >= next.requiredLevel;
+  const passive = getPassiveRestaurantIncomePerMin(save.ownedRestaurants ?? [], save.restaurantLevel);
+  return (
+    <div className="rounded-2xl border border-indigo-500/40 bg-gradient-to-br from-indigo-950/70 to-slate-900 p-3.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-300">Your restaurant</p>
+          <p className="font-display font-extrabold text-white text-base truncate">
+            <span className="mr-1">{current.flag}</span>
+            {current.name}
+          </p>
+        </div>
+        {passive > 0 && (
+          <span className="shrink-0 rounded-lg bg-emerald-500/15 border border-emerald-400/40 px-2 py-1 text-[10px] font-bold text-emerald-300 font-mono-num">
+            +${passive.toLocaleString()}/min from {save.ownedRestaurants.length} old
+          </span>
+        )}
+      </div>
+      {/* Chain progress */}
+      <div className="mt-3 flex items-center gap-1">
+        {CUISINE_ORDER.map((id, i) => {
+          const c = CUISINES[id];
+          const done = i < idx;
+          const here = i === idx;
+          return (
+            <React.Fragment key={id}>
+              <div
+                title={`${c.name} · Lv ${c.requiredLevel}`}
+                className={`flex flex-col items-center justify-center w-11 h-11 rounded-xl border text-lg ${
+                  here
+                    ? 'bg-amber-500/20 border-amber-400'
+                    : done
+                      ? 'bg-emerald-500/15 border-emerald-500/50'
+                      : 'bg-slate-900 border-slate-700 opacity-70'
+                }`}
+              >
+                <span aria-hidden>{c.flag}</span>
+                <span className="text-[8px] font-bold text-slate-300 leading-none">Lv{c.requiredLevel}</span>
+              </div>
+              {i < CUISINE_ORDER.length - 1 && <div className={`flex-1 h-0.5 ${done ? 'bg-emerald-500/60' : 'bg-slate-700'}`} />}
+            </React.Fragment>
+          );
+        })}
+      </div>
+      {next ? (
+        <div className="mt-3 flex items-center justify-between gap-2">
+          <p className="text-[11px] text-slate-300 leading-snug">
+            Next: <b className="text-white">{next.flag} {next.name}</b>{' '}
+            {ready ? '— ready to open!' : `at restaurant level ${next.requiredLevel} (you are ${save.restaurantLevel})`}
+          </p>
+          <button
+            onClick={onOpenGrandOpening}
+            className={`shrink-0 px-3 py-2 rounded-lg text-xs font-extrabold cursor-pointer ${
+              ready ? 'bg-indigo-500 hover:bg-indigo-400 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+            }`}
+          >
+            {ready ? 'Open it' : 'Preview'}
+          </button>
+        </div>
+      ) : (
+        <p className="mt-3 text-[11px] text-emerald-300">You own the whole chain. Keep collecting album cards!</p>
+      )}
     </div>
   );
 };
