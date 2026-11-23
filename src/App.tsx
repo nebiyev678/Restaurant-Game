@@ -5,6 +5,7 @@ import {
   ChefHat,
   ChevronDown,
   ChevronUp,
+  Clock,
   Coins,
   Flame,
   MapPin,
@@ -28,9 +29,11 @@ import {
 } from 'lucide-react';
 import { CookingMiniGame } from './components/CookingMiniGame';
 import { DailyBonusModal } from './components/DailyBonusModal';
+import { DayReportCard } from './components/DayReportCard';
 import { ManagementDrawers } from './components/ManagementDrawers';
 import { TitleScreen } from './components/TitleScreen';
 import { VirtualJoystick } from './components/VirtualJoystick';
+import { WelcomeBackModal } from './components/WelcomeBackModal';
 import { sound } from './game/audio';
 import {
   ACHIEVEMENTS,
@@ -44,17 +47,28 @@ import {
   RECIPES,
   SPECIALTY_LINES,
   STAFF_CATALOG,
+  STAFF_MAX_LEVEL,
+  STAFF_XP_PER_TASK,
   VEHICLE_CATALOG,
+  computeOfflineEarnings,
+  createEmptyDayStats,
   createInitialSaveState,
+  formatClock,
+  getCleanlinessLabel,
   getDailyLoginStatus,
   getEquipmentUpgradeCost,
+  getFranchiseIncomePerMinute,
   getLocalDateKey,
   getRestaurantTier,
+  getStaffTrainingCost,
+  getStaffXpForNextLevel,
+  getTotalDailyPayroll,
   getXpForNextLevel,
 } from './game/data';
 import {
   CafeThemeId,
   CustomerOrder,
+  DayReport,
   DrawerTab,
   EngineHudSnapshot,
   EquipmentId,
@@ -72,6 +86,16 @@ import { useOnlineStatus } from './hooks/usePWAInstall';
 const STORAGE_KEY = 'restaurant_empire_save_v1';
 
 const STAFF_FIRST_NAMES = ['Marco', 'Elena', 'Kenji', 'Nora', 'Mateo', 'Clara', 'Sam', 'Zoe'];
+
+/** Writes the save to localStorage, stamping lastSeenAt for offline-earnings calculation. */
+function persistSave(state: SaveState): boolean {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state, lastSeenAt: Date.now() }));
+    return true;
+  } catch {
+    return false; // storage quota / private mode
+  }
+}
 
 function loadSavedState(): { state: SaveState; hasExisting: boolean } {
   try {
@@ -95,6 +119,11 @@ function loadSavedState(): { state: SaveState; hasExisting: boolean } {
         equipmentLevels: { ...base.equipmentLevels, ...(parsed.equipmentLevels ?? {}) },
         stats: { ...base.stats, ...(parsed.stats ?? {}) },
         dailyLogin: { ...base.dailyLogin, ...(parsed.dailyLogin ?? {}) },
+        today: { ...base.today, ...(parsed.today ?? {}) },
+        lastSeenAt: typeof parsed.lastSeenAt === 'number' ? parsed.lastSeenAt : null,
+        staff: Array.isArray(parsed.staff)
+          ? parsed.staff.map((m) => ({ ...m, xp: typeof m.xp === 'number' ? m.xp : 0 }))
+          : base.staff,
       },
       hasExisting: true,
     };
@@ -138,6 +167,15 @@ export default function App() {
 
   const [popups, setPopups] = useState<FloatingPopup[]>([]);
   const [toast, setToast] = useState<{ title: string; subtitle: string } | null>(null);
+  const [dayReport, setDayReport] = useState<DayReport | null>(null);
+  const [offlineReward, setOfflineReward] = useState(() =>
+    computeOfflineEarnings(initialLoad.current.state)
+  );
+  const hiddenAtRef = useRef<number | null>(null);
+
+  // Latest-handler refs so the once-mounted engine always calls current logic
+  const dayEndedRef = useRef<() => void>(() => {});
+  const staffTaskDoneRef = useRef<(staffId: string) => void>(() => {});
 
   const canvasMountRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<RestaurantWorldEngine | null>(null);
@@ -234,6 +272,12 @@ export default function App() {
               customersServed: prev.stats.customersServed + 1,
               tipsEarned: prev.stats.tipsEarned + tip,
             },
+            today: {
+              ...prev.today,
+              revenue: prev.today.revenue + revenue,
+              tips: prev.today.tips + tip,
+              customersServed: prev.today.customersServed + 1,
+            },
           };
         });
       },
@@ -242,6 +286,7 @@ export default function App() {
         commitSave((prev) => ({
           ...prev,
           reputation: Math.max(1.0, prev.reputation + repDelta),
+          today: { ...prev.today, customersLost: prev.today.customersLost + 1 },
         }));
       },
       onCookRequested: (station, suggestedOrder) => {
@@ -259,6 +304,7 @@ export default function App() {
           ...prev,
           restaurantCash: prev.restaurantCash + amount,
           totalEarned: prev.totalEarned + amount,
+          today: { ...prev.today, deliveryIncome: prev.today.deliveryIncome + amount },
         }));
       },
       onTableCleaned: () => {
@@ -273,6 +319,8 @@ export default function App() {
           cleanliness: Math.max(20, Math.min(100, prev.cleanliness + delta)),
         }));
       },
+      onDayEnded: () => dayEndedRef.current(),
+      onStaffTaskDone: (staffId) => staffTaskDoneRef.current(staffId),
     });
 
     engineRef.current = engine;
@@ -281,6 +329,9 @@ export default function App() {
       engineRef.current = null;
     };
   }, [commitSave, pushPopup, showToast]);
+
+  // Only roster/level changes matter to the 3D world, not per-task XP ticks
+  const staffSyncKey = save.staff.map((m) => `${m.id}:${m.level}`).join('|');
 
   // Sync 3D world whenever tier, cafe theme, clothes, house, furniture, vehicle, or staff change
   useEffect(() => {
@@ -294,8 +345,93 @@ export default function App() {
     save.activeVehicleId,
     save.activeHouseId,
     save.ownedFurniture,
-    save.staff,
+    staffSyncKey,
   ]);
+
+  // --- Day cycle: midnight closes the books, pays staff, and starts a new day ---
+  const handleDayEnded = useCallback(() => {
+    const s = saveRef.current;
+    const payrollDue = getTotalDailyPayroll(s.staff);
+    const payrollPaid = Math.min(payrollDue, s.restaurantCash);
+    const t = s.today;
+    const report: DayReport = {
+      dayNumber: s.dayNumber,
+      stats: { ...t },
+      payrollDue,
+      payrollPaid,
+      unpaidWages: payrollPaid < payrollDue,
+      netProfit:
+        t.revenue + t.tips + t.deliveryIncome + t.franchiseIncome - t.ingredientCost - payrollPaid,
+      staffCount: s.staff.length,
+    };
+
+    commitSave((prev) => {
+      const due = getTotalDailyPayroll(prev.staff);
+      const paid = Math.min(due, prev.restaurantCash);
+      return {
+        ...prev,
+        restaurantCash: prev.restaurantCash - paid,
+        // Missing payroll upsets the team, which customers notice
+        reputation: paid < due ? Math.max(1.0, prev.reputation - 0.15) : prev.reputation,
+        dayNumber: prev.dayNumber + 1,
+        today: createEmptyDayStats(),
+      };
+    });
+    sound.playBell();
+    setDayReport(report);
+  }, [commitSave]);
+  dayEndedRef.current = handleDayEnded;
+
+  // --- Staff earn XP on the job and level up for free (paid training is a shortcut) ---
+  const handleStaffTaskDone = useCallback(
+    (staffId: string) => {
+      const member = saveRef.current.staff.find((m) => m.id === staffId);
+      if (!member || member.level >= STAFF_MAX_LEVEL) return;
+      const willLevel = member.xp + STAFF_XP_PER_TASK >= getStaffXpForNextLevel(member.level);
+
+      commitSave((prev) => ({
+        ...prev,
+        staff: prev.staff.map((m) => {
+          if (m.id !== staffId || m.level >= STAFF_MAX_LEVEL) return m;
+          let xp = m.xp + STAFF_XP_PER_TASK;
+          let level = m.level;
+          const need = getStaffXpForNextLevel(level);
+          if (xp >= need) {
+            xp -= need;
+            level += 1;
+          }
+          return {
+            ...m,
+            level,
+            xp: level >= STAFF_MAX_LEVEL ? 0 : xp,
+            speedMultiplier: 1 + (level - 1) * 0.14,
+          };
+        }),
+      }));
+
+      if (willLevel) {
+        sound.playLevelUp();
+        showToast(`${member.name} Leveled Up!`, `Lv ${member.level + 1} from on-the-job experience.`);
+      }
+    },
+    [commitSave, showToast]
+  );
+  staffTaskDoneRef.current = handleStaffTaskDone;
+
+  const closeDayReport = useCallback(() => setDayReport(null), []);
+
+  const handleClaimOfflineReward = useCallback(() => {
+    if (!offlineReward) return;
+    const amount = offlineReward.amount;
+    sound.playCash();
+    commitSave((prev) => ({
+      ...prev,
+      restaurantCash: prev.restaurantCash + amount,
+      totalEarned: prev.totalEarned + amount,
+    }));
+    setOfflineReward(null);
+    pushPopup(`+$${amount.toLocaleString()} Offline`, 'emerald');
+  }, [offlineReward, commitSave, pushPopup]);
 
   const dailyStatus = getDailyLoginStatus(save.dailyLogin);
   // Keep dailyStatus sensitive to calendar day changes while open
@@ -317,10 +453,14 @@ export default function App() {
   useEffect(() => {
     const isTitle = screen === 'title';
     const isPaused =
-      screen === 'paused' || drawerTab !== 'none' || cookModal !== null || showDailyModal;
+      screen === 'paused' ||
+      drawerTab !== 'none' ||
+      cookModal !== null ||
+      showDailyModal ||
+      offlineReward !== null;
     engineRef.current?.setTitleMode(isTitle);
     engineRef.current?.setPaused(isPaused);
-  }, [screen, drawerTab, cookModal, showDailyModal]);
+  }, [screen, drawerTab, cookModal, showDailyModal, offlineReward]);
 
   // Passive Franchise Income + Daily Salaries + Auto-Save + Day Rollover Check every 10s
   useEffect(() => {
@@ -329,31 +469,62 @@ export default function App() {
       setTodayKey((prev) => (prev === currentKey ? prev : currentKey));
 
       const s = saveRef.current;
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
-      } catch {
-        // ignore storage quota errors
-      }
-      if (screen !== 'playing') return;
+      persistSave(s);
+      // Backgrounded time is paid out via the Welcome Back offline reward instead
+      if (screen !== 'playing' || document.hidden) return;
 
       // Franchise passive income tick (10s = 1/6th minute)
       if (s.ownedFranchises.length > 0) {
-        const perMin = s.ownedFranchises.reduce((sum, id) => {
-          const fr = FRANCHISE_CATALOG.find((x) => x.id === id);
-          return sum + (fr?.incomePerMinute ?? 0);
-        }, 0);
-        const tickIncome = Math.round(perMin / 6);
+        const tickIncome = Math.round(getFranchiseIncomePerMinute(s.ownedFranchises) / 6);
         if (tickIncome > 0) {
           commitSave((prev) => ({
             ...prev,
             restaurantCash: prev.restaurantCash + tickIncome,
             totalEarned: prev.totalEarned + tickIncome,
+            today: { ...prev.today, franchiseIncome: prev.today.franchiseIncome + tickIncome },
           }));
         }
+      }
+
+      // Busser / Cleaner staff steadily restore dining-room cleanliness
+      const cleaners = s.staff.filter((m) => m.role === 'cleaner').length;
+      if (cleaners > 0 && s.cleanliness < 100) {
+        commitSave((prev) => ({
+          ...prev,
+          cleanliness: Math.min(100, prev.cleanliness + 2 * cleaners),
+        }));
       }
     }, 10000);
     return () => window.clearInterval(interval);
   }, [screen, commitSave]);
+
+  // Android/PWA lifecycle: save when backgrounded, offer offline earnings on return
+  useEffect(() => {
+    const onHide = () => {
+      persistSave(saveRef.current);
+    };
+    const onVisibility = () => {
+      if (document.hidden) {
+        hiddenAtRef.current = Date.now();
+        onHide();
+        return;
+      }
+      const hiddenAt = hiddenAtRef.current;
+      hiddenAtRef.current = null;
+      if (!hiddenAt) return;
+      const reward = computeOfflineEarnings({
+        ownedFranchises: saveRef.current.ownedFranchises,
+        lastSeenAt: hiddenAt,
+      });
+      if (reward) setOfflineReward((curr) => curr ?? reward);
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onHide);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onHide);
+    };
+  }, []);
 
   // Escape key pause / close drawers
   useEffect(() => {
@@ -377,11 +548,10 @@ export default function App() {
   }, [screen, drawerTab, cookModal, showDailyModal]);
 
   const handleSaveNow = useCallback(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(saveRef.current));
+    if (persistSave(saveRef.current)) {
       setHasSavedCareer(true);
       showToast('Game Saved', 'Progress stored locally on device.');
-    } catch {
+    } else {
       showToast('Save Failed', 'Storage unavailable.');
     }
   }, [showToast]);
@@ -392,6 +562,8 @@ export default function App() {
     setSave(fresh);
     setHasSavedCareer(false);
     autoPromptedDateRef.current = null;
+    setDayReport(null);
+    setOfflineReward(null);
     localStorage.removeItem(STORAGE_KEY);
     engineRef.current?.clearHeldDish();
     engineRef.current?.syncDynamicWorld(true);
@@ -416,11 +588,7 @@ export default function App() {
           totalDaysClaimed: prev.dailyLogin.totalDaysClaimed + 1,
         },
       };
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
-      } catch {
-        // ignore storage quota errors
-      }
+      persistSave(nextState);
       return nextState;
     });
     setHasSavedCareer(true);
@@ -447,6 +615,11 @@ export default function App() {
         ...prev.stats,
         dishesCooked: prev.stats.dishesCooked + 1,
         burgersCooked: prev.stats.burgersCooked + (recipeId === 'burger' ? 1 : 0),
+      },
+      today: {
+        ...prev.today,
+        dishesCooked: prev.today.dishesCooked + 1,
+        ingredientCost: prev.today.ingredientCost + Math.min(ingredientCost, prev.restaurantCash),
       },
     }));
     pushPopup(
@@ -562,15 +735,17 @@ export default function App() {
 
   const handleUpgradeStaff = (staffId: string) => {
     const member = save.staff.find((s) => s.id === staffId);
-    if (!member || member.level >= 8) return;
-    const cost = Math.round(180 * Math.pow(1.45, member.level - 1));
+    if (!member || member.level >= STAFF_MAX_LEVEL) return;
+    const cost = getStaffTrainingCost(member.level);
     if (save.restaurantCash < cost) return;
     sound.playCash();
     commitSave((prev) => ({
       ...prev,
       restaurantCash: prev.restaurantCash - cost,
       staff: prev.staff.map((s) =>
-        s.id === staffId ? { ...s, level: s.level + 1, speedMultiplier: s.speedMultiplier + 0.14 } : s
+        s.id === staffId
+          ? { ...s, level: s.level + 1, xp: 0, speedMultiplier: 1 + s.level * 0.14 }
+          : s
       ),
     }));
   };
@@ -705,6 +880,8 @@ export default function App() {
   };
 
   const nextXp = getXpForNextLevel(save.restaurantLevel);
+  const cleanInfo = getCleanlinessLabel(save.cleanliness);
+  const dailyPayroll = getTotalDailyPayroll(save.staff);
 
   const tutorialMessages = [
     'Walk to the glowing Grill or Fryer and press Space / Cook to prepare a dish.',
@@ -857,6 +1034,24 @@ export default function App() {
 
               <div className="w-px h-6 bg-slate-800" />
 
+              <div
+                title={`Cleanliness: ${cleanInfo.label}${
+                  cleanInfo.tone === 'good' ? '' : ' · customers lose patience faster'
+                }`}
+                className={`flex items-center gap-1 text-xs font-mono-num font-bold ${
+                  cleanInfo.tone === 'good'
+                    ? 'text-emerald-300'
+                    : cleanInfo.tone === 'ok'
+                      ? 'text-amber-300'
+                      : 'text-rose-400'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>{Math.round(save.cleanliness)}%</span>
+              </div>
+
+              <div className="w-px h-6 bg-slate-800" />
+
               <button
                 onClick={() => {
                   sound.playClick();
@@ -886,6 +1081,17 @@ export default function App() {
 
             {/* Zone & Camera / Audio / Pause Controls */}
             <div className="pointer-events-auto flex items-center gap-1.5">
+              <div
+                title={`Day ${save.dayNumber} · staff are paid at midnight ($${dailyPayroll.toLocaleString()}/day)`}
+                className="flex items-center gap-1.5 px-2.5 py-2 rounded-xl bg-slate-950/92 border border-slate-700/80 text-xs font-semibold text-slate-200"
+              >
+                <Clock className="w-3.5 h-3.5 text-indigo-300" />
+                <span className="font-mono-num whitespace-nowrap">
+                  <span className="hidden sm:inline">Day </span>
+                  <span className="sm:hidden">D</span>
+                  {save.dayNumber} · {formatClock(saveRef.current.timeOfDay)}
+                </span>
+              </div>
               <div className="hidden md:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-950/92 border border-slate-700/80 text-xs font-semibold text-slate-200">
                 <MapPin className="w-3.5 h-3.5 text-amber-400" />
                 <span className="whitespace-nowrap">{hud.playerZoneLabel}</span>
@@ -1014,7 +1220,7 @@ export default function App() {
           )}
 
           {/* Gentle Onboarding Tutorial Tip */}
-          {save.tutorialStep < 4 && drawerTab === 'none' && !cookModal && (
+          {save.tutorialStep < 4 && drawerTab === 'none' && !cookModal && !dayReport && (
             <div className="fixed top-20 right-3 sm:right-5 max-w-[260px] pointer-events-auto rounded-xl bg-slate-950/92 border border-amber-500/50 p-3 shadow-xl">
               <div className="flex items-center justify-between gap-2 mb-1">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400">
@@ -1186,8 +1392,24 @@ export default function App() {
         }
       />
 
+      {/* End-of-Day Report (non-blocking) */}
+      {dayReport && screen === 'playing' && (
+        <DayReportCard report={dayReport} onClose={closeDayReport} />
+      )}
+
+      {/* Offline Franchise Earnings */}
+      {offlineReward && screen === 'playing' && (
+        <WelcomeBackModal
+          minutesAway={offlineReward.minutesAway}
+          cappedMinutes={offlineReward.cappedMinutes}
+          amount={offlineReward.amount}
+          franchiseCount={save.ownedFranchises.length}
+          onClaim={handleClaimOfflineReward}
+        />
+      )}
+
       {/* Daily Login Bonus Modal */}
-      {showDailyModal && screen === 'playing' && (
+      {showDailyModal && screen === 'playing' && !offlineReward && (
         <DailyBonusModal
           status={dailyStatus}
           totalDaysClaimed={save.dailyLogin.totalDaysClaimed}

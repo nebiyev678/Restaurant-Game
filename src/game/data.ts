@@ -3,10 +3,12 @@ import {
   CafeThemeDef,
   CityZone,
   ClothingItem,
+  DayStats,
   EquipmentDef,
   EquipmentId,
   FranchiseDef,
   FurnitureDef,
+  HiredStaff,
   HouseDef,
   MissionDef,
   RecipeDef,
@@ -1106,6 +1108,117 @@ export function getEquipmentUpgradeCost(id: EquipmentId, currentLevel: number): 
   return Math.round(def.baseCost * Math.pow(1.55, currentLevel - 1));
 }
 
+// ---------------------------------------------------------------------------
+// Day cycle & economy helpers
+// ---------------------------------------------------------------------------
+
+/** Max staff level reachable by on-the-job XP or paid training. */
+export const STAFF_MAX_LEVEL = 8;
+
+/** XP a staff member gains for finishing one task (cook, serve, clean, checkout). */
+export const STAFF_XP_PER_TASK = 5;
+
+/** XP needed to go from `level` to `level + 1`. */
+export function getStaffXpForNextLevel(level: number): number {
+  return 60 * level;
+}
+
+/** Cost of paid training (skips the XP grind for one level). */
+export function getStaffTrainingCost(level: number): number {
+  return Math.round(180 * Math.pow(1.45, level - 1));
+}
+
+/** Daily wage for a hired staff member; experienced staff earn 12% more per level. */
+export function getStaffDailySalary(member: HiredStaff): number {
+  const def = STAFF_CATALOG.find((s) => s.role === member.role);
+  const base = def?.dailySalary ?? 0;
+  return Math.round(base * (1 + (member.level - 1) * 0.12));
+}
+
+export function getTotalDailyPayroll(staff: HiredStaff[]): number {
+  return staff.reduce((sum, m) => sum + getStaffDailySalary(m), 0);
+}
+
+/** Sum of the tip prestige (%) granted by the currently equipped outfit, hat and watch. */
+export function getPrestigeTipBonus(
+  save: Pick<SaveState, 'equippedOutfitId' | 'equippedHatId' | 'equippedWatchId'>
+): number {
+  return [save.equippedOutfitId, save.equippedHatId, save.equippedWatchId].reduce((sum, id) => {
+    const item = CLOTHING_CATALOG.find((c) => c.id === id);
+    return sum + (item?.prestigeBonus ?? 0);
+  }, 0);
+}
+
+/**
+ * Patience drain multiplier from restaurant cleanliness.
+ * >= 80% clean has no penalty; at the 20% floor customers lose patience 60% faster.
+ */
+export function getCleanlinessPatienceMult(cleanliness: number): number {
+  if (cleanliness >= 80) return 1;
+  return 1 + (80 - Math.max(20, cleanliness)) / 100;
+}
+
+/** Multiplier applied to positive reputation gains; a dirty dining room earns less goodwill. */
+export function getCleanlinessReputationMult(cleanliness: number): number {
+  if (cleanliness >= 70) return 1;
+  if (cleanliness >= 45) return 0.6;
+  return 0.3;
+}
+
+export function getCleanlinessLabel(cleanliness: number): { label: string; tone: 'good' | 'ok' | 'bad' } {
+  if (cleanliness >= 80) return { label: 'Spotless', tone: 'good' };
+  if (cleanliness >= 50) return { label: 'Messy', tone: 'ok' };
+  return { label: 'Filthy', tone: 'bad' };
+}
+
+export function createEmptyDayStats(): DayStats {
+  return {
+    revenue: 0,
+    tips: 0,
+    deliveryIncome: 0,
+    franchiseIncome: 0,
+    ingredientCost: 0,
+    customersServed: 0,
+    customersLost: 0,
+    dishesCooked: 0,
+  };
+}
+
+/** Offline franchise earnings: 50% efficiency, capped at 8 hours away, ignored under 2 minutes. */
+export const OFFLINE_EFFICIENCY = 0.5;
+export const OFFLINE_CAP_MINUTES = 8 * 60;
+export const OFFLINE_MIN_MINUTES = 2;
+
+export function getFranchiseIncomePerMinute(ownedFranchises: string[]): number {
+  return ownedFranchises.reduce((sum, id) => {
+    const fr = FRANCHISE_CATALOG.find((x) => x.id === id);
+    return sum + (fr?.incomePerMinute ?? 0);
+  }, 0);
+}
+
+export function computeOfflineEarnings(
+  save: Pick<SaveState, 'ownedFranchises' | 'lastSeenAt'>,
+  now: number = Date.now()
+): { minutesAway: number; cappedMinutes: number; amount: number } | null {
+  if (!save.lastSeenAt || save.ownedFranchises.length === 0) return null;
+  const minutesAway = Math.floor((now - save.lastSeenAt) / 60000);
+  if (minutesAway < OFFLINE_MIN_MINUTES) return null;
+  const cappedMinutes = Math.min(minutesAway, OFFLINE_CAP_MINUTES);
+  const amount = Math.round(
+    getFranchiseIncomePerMinute(save.ownedFranchises) * cappedMinutes * OFFLINE_EFFICIENCY
+  );
+  if (amount <= 0) return null;
+  return { minutesAway, cappedMinutes, amount };
+}
+
+/** Converts timeOfDay (0..1) into a 24h clock string, e.g. 0.5 -> "12:00". */
+export function formatClock(timeOfDay: number): string {
+  const totalMinutes = Math.floor((((timeOfDay % 1) + 1) % 1) * 24 * 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = Math.floor((totalMinutes % 60) / 10) * 10;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
 export interface DailyBonusTier {
   day: number;
   label: string;
@@ -1244,5 +1357,7 @@ export function createInitialSaveState(): SaveState {
       lastClaimDate: null,
       totalDaysClaimed: 0,
     },
+    today: createEmptyDayStats(),
+    lastSeenAt: null,
   };
 }
