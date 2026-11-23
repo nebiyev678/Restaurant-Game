@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Check, ChefHat, Flame, Lock, Sparkles, X } from 'lucide-react';
-import { RECIPES, SPECIALTY_LINES } from '../game/data';
+import { DAILY_SPECIAL_BONUS, RECIPES, SPECIALTY_LINES } from '../game/data';
 import { sound } from '../game/audio';
 import { CustomerOrder, RecipeId, SpecialtyLineId, StationType } from '../game/types';
 
@@ -13,6 +13,8 @@ interface CookingMiniGameProps {
   restaurantCash: number;
   pendingOrders: CustomerOrder[];
   suggestedOrder: CustomerOrder | null;
+  /** Dish of the day (sells for more). */
+  dailySpecial?: RecipeId | null;
   onComplete: (recipeId: RecipeId, qualityBonus: number, ingredientCost: number) => void;
   onOpenSpecialtyMenu: () => void;
   onClose: () => void;
@@ -27,6 +29,7 @@ export const CookingMiniGame: React.FC<CookingMiniGameProps> = ({
   restaurantCash,
   pendingOrders,
   suggestedOrder,
+  dailySpecial = null,
   onComplete,
   onOpenSpecialtyMenu,
   onClose,
@@ -58,7 +61,8 @@ export const CookingMiniGame: React.FC<CookingMiniGameProps> = ({
   const actualCost = Math.max(1, Math.round(def.ingredientCost * (1 - bulkDiscount)));
   const canAfford = restaurantCash >= actualCost;
   const specialtyMult = station === 'specialty' ? 1 + (equipmentLevel - 1) * 0.1 : 1;
-  const displayPrice = Math.round(def.sellPrice * specialtyMult);
+  const isSpecial = selectedRecipe === dailySpecial;
+  const displayPrice = Math.round(def.sellPrice * specialtyMult * (isSpecial ? 1 + DAILY_SPECIAL_BONUS : 1));
 
   // Generous sweet spot for beginners; widens further with equipment level
   const sweetWidth = Math.min(44, 28 + (equipmentLevel - 1) * 3);
@@ -241,6 +245,16 @@ export const CookingMiniGame: React.FC<CookingMiniGameProps> = ({
                     }`}
                   >
                     <span>{r.name}</span>
+                    {id === dailySpecial && (
+                      <span
+                        className={`px-1 py-0.5 rounded text-[10px] font-bold ${
+                          active ? 'bg-slate-950/20 text-slate-950' : 'bg-amber-500/20 text-amber-300'
+                        }`}
+                        title="Dish of the day"
+                      >
+                        ★ +{Math.round(DAILY_SPECIAL_BONUS * 100)}%
+                      </span>
+                    )}
                     {r.recipeLine && (
                       <span
                         className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${

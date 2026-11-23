@@ -14,6 +14,8 @@ import {
   HiredStaff,
   HouseDef,
   MissionDef,
+  QuickGoal,
+  QuickGoalState,
   RecipeDef,
   RecipeId,
   SaveState,
@@ -1280,19 +1282,27 @@ export type ChallengeEvent =
   | { kind: 'reach_streak'; value: number }
   | { kind: 'serve_recipe'; recipeIds: RecipeId[] };
 
+/** Progress a single goal/challenge by one gameplay event (returns the same object if nothing changed). */
+export function applyGoalEvent<T extends { kind: DailyChallengeKind; recipeId?: RecipeId; target: number; progress: number }>(
+  c: T,
+  ev: ChallengeEvent
+): T {
+  if (c.kind !== ev.kind || c.progress >= c.target) return c;
+  let progress = c.progress;
+  if (ev.kind === 'reach_streak') progress = Math.max(progress, ev.value);
+  else if (ev.kind === 'serve_recipe') progress += ev.recipeIds.filter((r) => r === c.recipeId).length;
+  else progress += ev.amount;
+  progress = Math.min(c.target, progress);
+  return progress === c.progress ? c : { ...c, progress };
+}
+
 /** Applies one gameplay event to today's challenges (pure; returns the same object if nothing changed). */
 export function applyChallengeProgress(state: DailyChallengeState, ev: ChallengeEvent): DailyChallengeState {
   let changed = false;
   const items = state.items.map((c) => {
-    if (c.kind !== ev.kind || c.progress >= c.target) return c;
-    let progress = c.progress;
-    if (ev.kind === 'reach_streak') progress = Math.max(progress, ev.value);
-    else if (ev.kind === 'serve_recipe') progress += ev.recipeIds.filter((r) => r === c.recipeId).length;
-    else progress += ev.amount;
-    progress = Math.min(c.target, progress);
-    if (progress === c.progress) return c;
-    changed = true;
-    return { ...c, progress };
+    const next = applyGoalEvent(c, ev);
+    if (next !== c) changed = true;
+    return next;
   });
   return changed ? { ...state, items } : state;
 }
@@ -1326,6 +1336,163 @@ export function describeChallenge(c: DailyChallenge): string {
     case 'serve_recipe':
       return `Serve ${c.target} × ${c.recipeId ? RECIPES[c.recipeId].name : 'dish'}`;
   }
+}
+
+// ---------------------------------------------------------------------------
+// "One more day" hooks: quick goal chain, daily special, star streak
+// ---------------------------------------------------------------------------
+
+/** Every Nth quick goal also opens a chest with a bigger reward. */
+export const QUICK_GOAL_CHEST_EVERY = 5;
+/** Price bonus for the dish of the day. */
+export const DAILY_SPECIAL_BONUS = 0.25;
+/** Chance that a new order leads with the dish of the day. */
+export const DAILY_SPECIAL_ORDER_CHANCE = 0.35;
+
+function seededRandom(key: string): () => number {
+  let seed = 2166136261;
+  for (const ch of key) seed = Math.imul(seed ^ ch.charCodeAt(0), 16777619) >>> 0;
+  seed ^= seed >>> 16;
+  seed = Math.imul(seed, 0x85ebca6b) >>> 0;
+  seed ^= seed >>> 13;
+  return () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+}
+
+/**
+ * The next short goal in the chain: small targets (about a minute or two of play),
+ * never the same kind twice in a row, and often featuring the dish of the day.
+ */
+export function generateQuickGoal(
+  index: number,
+  restaurantLevel: number,
+  unlockedRecipes: RecipeId[],
+  special: RecipeId | null,
+  previousKind?: DailyChallengeKind
+): QuickGoal {
+  const rnd = seededRandom(`qg_${index}`);
+  const lv = Math.max(1, restaurantLevel);
+  const kinds: DailyChallengeKind[] = ['serve_orders', 'perfect_cooks', 'clean_tables', 'earn_cash', 'reach_streak', 'serve_recipe'];
+  if (lv >= 3) kinds.push('serve_combos');
+  // The first goals teach the basics
+  const pool = index < 2 ? (['serve_orders', 'perfect_cooks'] as DailyChallengeKind[]) : kinds;
+  const choices = pool.filter((k) => k !== previousKind);
+  const kind = choices[Math.floor(rnd() * choices.length)] ?? 'serve_orders';
+
+  let target: number;
+  let recipeId: RecipeId | undefined;
+  switch (kind) {
+    case 'serve_orders':
+      target = Math.min(6, 2 + Math.floor(lv / 3));
+      break;
+    case 'perfect_cooks':
+      target = Math.min(5, 2 + Math.floor(lv / 4));
+      break;
+    case 'clean_tables':
+      target = Math.min(4, 2 + Math.floor(lv / 5));
+      break;
+    case 'earn_cash':
+      target = Math.round((80 + lv * 45) / 10) * 10;
+      break;
+    case 'reach_streak':
+      target = Math.min(6, 3 + Math.floor(lv / 4));
+      break;
+    case 'serve_combos':
+      target = lv >= 8 ? 2 : 1;
+      break;
+    case 'serve_recipe':
+    default: {
+      target = Math.min(4, 2 + Math.floor(lv / 6));
+      const list = unlockedRecipes.length > 0 ? unlockedRecipes : (['burger'] as RecipeId[]);
+      recipeId = special && list.includes(special) && rnd() < 0.6 ? special : list[Math.floor(rnd() * list.length)];
+      break;
+    }
+  }
+  const harder = kind === 'reach_streak' || kind === 'serve_combos';
+  const goal: QuickGoal = {
+    id: `qg_${index}`,
+    kind,
+    target,
+    progress: 0,
+    reward: Math.round((40 + lv * 18) * (harder ? 1.3 : 1)),
+  };
+  if (recipeId) goal.recipeId = recipeId;
+  return goal;
+}
+
+/** Bonus for finishing the last goal of a chest cycle. */
+export function getQuickGoalChestReward(restaurantLevel: number): number {
+  return 200 + Math.max(1, restaurantLevel) * 80;
+}
+
+/** Goals left until the next chest (1 = the current goal opens it). */
+export function goalsUntilChest(completed: number): number {
+  return QUICK_GOAL_CHEST_EVERY - (completed % QUICK_GOAL_CHEST_EVERY);
+}
+
+export function isQuickGoalDone(state: QuickGoalState): boolean {
+  return !!state.current && state.current.progress >= state.current.target;
+}
+
+/** Applies a gameplay event to the active quick goal (same object back if nothing changed). */
+export function applyQuickGoalProgress(state: QuickGoalState, ev: ChallengeEvent): QuickGoalState {
+  if (!state.current) return state;
+  const next = applyGoalEvent(state.current, ev);
+  return next === state.current ? state : { ...state, current: next };
+}
+
+/** Short label for the HUD chip. */
+export function describeQuickGoal(g: QuickGoal): string {
+  switch (g.kind) {
+    case 'serve_orders':
+      return `Serve ${g.target} orders`;
+    case 'serve_combos':
+      return g.target === 1 ? 'Serve a combo' : `Serve ${g.target} combos`;
+    case 'perfect_cooks':
+      return `${g.target} perfect cooks`;
+    case 'clean_tables':
+      return `Clean ${g.target} tables`;
+    case 'earn_cash':
+      return `Earn $${g.target.toLocaleString()}`;
+    case 'reach_streak':
+      return `Hit a ${g.target}× streak`;
+    case 'serve_recipe':
+      return `Serve ${g.target} ${g.recipeId ? RECIPES[g.recipeId].name : 'dishes'}`;
+  }
+}
+
+/** Picks the dish of the day for a given in-game day, avoiding yesterday's special when possible. */
+export function pickDailySpecial(dayNumber: number, unlockedRecipes: RecipeId[], previous: RecipeId | null): RecipeId | null {
+  if (unlockedRecipes.length === 0) return null;
+  const options = unlockedRecipes.length > 1 ? unlockedRecipes.filter((r) => r !== previous) : unlockedRecipes;
+  const rnd = seededRandom(`special_${dayNumber}`);
+  return options[Math.floor(rnd() * options.length)];
+}
+
+/** Extra star reward from consecutive 2+ star days: +20% per extra day, up to +100%. */
+export function getStarStreakBonusPct(streak: number): number {
+  return Math.min(100, Math.max(0, streak - 1) * 20);
+}
+
+/** The recipe closest to its next medal, if within `maxRemaining` orders. */
+export function findNearestMastery(
+  mastery: Partial<Record<RecipeId, number>>,
+  unlockedRecipes: RecipeId[],
+  maxRemaining = 6
+): { recipeId: RecipeId; tierName: string; remaining: number } | null {
+  let best: { recipeId: RecipeId; tierName: string; remaining: number } | null = null;
+  for (const r of unlockedRecipes) {
+    const count = mastery[r] ?? 0;
+    const next = MASTERY_TIERS[getMasteryTier(count) + 1];
+    if (!next) continue;
+    const remaining = next.at - count;
+    if (remaining <= maxRemaining && (!best || remaining < best.remaining)) {
+      best = { recipeId: r, tierName: next.name, remaining };
+    }
+  }
+  return best;
 }
 
 // ---------------------------------------------------------------------------
@@ -1584,5 +1751,8 @@ export function createInitialSaveState(): SaveState {
     recipeMastery: {},
     dailyChallenges: { date: null, items: [], bonusClaimed: false },
     totalStars: 0,
+    quickGoals: { completed: 0, current: generateQuickGoal(0, 1, ['burger', 'fries'], 'burger') },
+    dailySpecial: 'burger',
+    starStreak: 0,
   };
 }

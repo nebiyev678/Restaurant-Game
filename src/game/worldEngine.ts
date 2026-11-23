@@ -16,6 +16,8 @@ import {
   getActiveStations,
   getComboBonusMult,
   getMasteryPriceMult,
+  DAILY_SPECIAL_BONUS,
+  DAILY_SPECIAL_ORDER_CHANCE,
   getStreakMult,
   rollComboSize,
   getCleanlinessPatienceMult,
@@ -2311,7 +2313,8 @@ export class RestaurantWorldEngine {
       const def = RECIPES[r];
       const specialtyFactor =
         def.station === 'specialty' ? 1 + ((save.equipmentLevels.specialty ?? 1) - 1) * 0.1 : 1;
-      return sum + def.sellPrice * specialtyFactor * getMasteryPriceMult(save.recipeMastery?.[r] ?? 0);
+      const specialFactor = r === save.dailySpecial ? 1 + DAILY_SPECIAL_BONUS : 1;
+      return sum + def.sellPrice * specialtyFactor * specialFactor * getMasteryPriceMult(save.recipeMastery?.[r] ?? 0);
     }, 0);
     const baseSale = Math.round(itemsValue * qualityBonus * getComboBonusMult(order.items.length));
 
@@ -3454,6 +3457,13 @@ export class RestaurantWorldEngine {
     for (let k = 0; k < size; k++) {
       if (pool.length === 0) pool.push(...unlocked);
       items.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+    }
+    // Dish of the day: a good share of orders lead with it
+    const special = save.dailySpecial;
+    if (special && unlocked.includes(special) && Math.random() < DAILY_SPECIAL_ORDER_CHANCE) {
+      const at = items.indexOf(special);
+      if (at > 0) [items[0], items[at]] = [items[at], items[0]];
+      else if (at < 0) items[0] = special;
     }
     const recipeId = items[0];
     // Bigger orders get proportionally more patience

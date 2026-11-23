@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import { CookingMiniGame } from './components/CookingMiniGame';
 import { DailyBonusModal } from './components/DailyBonusModal';
+import { QuickGoalChip } from './components/QuickGoalChip';
 import { DayReportCard } from './components/DayReportCard';
 import { FloatingJoystick } from './components/FloatingJoystick';
 import { PreviewThumb } from './components/ItemPreview';
@@ -60,6 +61,17 @@ import {
   STAFF_MAX_LEVEL,
   STATION_INFO,
   applyChallengeProgress,
+  applyQuickGoalProgress,
+  describeQuickGoal,
+  findNearestMastery,
+  generateQuickGoal,
+  getQuickGoalChestReward,
+  getStarStreakBonusPct,
+  goalsUntilChest,
+  isQuickGoalDone,
+  pickDailySpecial,
+  QUICK_GOAL_CHEST_EVERY,
+  DAILY_SPECIAL_BONUS,
   computeDayStars,
   countClaimableChallenges,
   generateDailyChallenges,
@@ -83,6 +95,7 @@ import {
   getStaffXpForNextLevel,
   getTotalDailyPayroll,
   getXpForNextLevel,
+  type ChallengeEvent,
 } from './game/data';
 import {
   CafeThemeId,
@@ -161,6 +174,28 @@ function loadSavedState(): { state: SaveState; hasExisting: boolean } {
         recipeMastery: { ...(parsed.recipeMastery ?? {}) },
         dailyChallenges: parsed.dailyChallenges?.items ? parsed.dailyChallenges : base.dailyChallenges,
         totalStars: typeof parsed.totalStars === 'number' ? parsed.totalStars : 0,
+        ...(() => {
+          const unlocked = Array.isArray(parsed.unlockedRecipes) && parsed.unlockedRecipes.length > 0
+            ? parsed.unlockedRecipes
+            : base.unlockedRecipes;
+          const special =
+            parsed.dailySpecial && unlocked.includes(parsed.dailySpecial)
+              ? parsed.dailySpecial
+              : pickDailySpecial(parsed.dayNumber ?? 1, unlocked, null);
+          const qg = parsed.quickGoals;
+          const quickGoals =
+            qg && typeof qg.completed === 'number' && qg.current
+              ? qg
+              : {
+                  completed: 0,
+                  current: generateQuickGoal(0, parsed.restaurantLevel ?? 1, unlocked, special),
+                };
+          return {
+            dailySpecial: special,
+            quickGoals,
+            starStreak: typeof parsed.starStreak === 'number' ? parsed.starStreak : 0,
+          };
+        })(),
         staff: Array.isArray(parsed.staff)
           ? parsed.staff.map((m) => ({ ...m, xp: typeof m.xp === 'number' ? m.xp : 0 }))
           : base.staff,
@@ -377,13 +412,19 @@ export default function App() {
               info.items.forEach((r) => (m[r] = (m[r] ?? 0) + 1));
               return m;
             })(),
-            dailyChallenges: [
-              { kind: 'serve_orders', amount: 1 } as const,
-              { kind: 'serve_combos', amount: info.comboSize > 1 ? 1 : 0 } as const,
-              { kind: 'earn_cash', amount: total } as const,
-              { kind: 'serve_recipe', recipeIds: info.items } as const,
-              { kind: 'reach_streak', value: info.streak } as const,
-            ].reduce((st, ev) => applyChallengeProgress(st, ev), prev.dailyChallenges),
+            ...(() => {
+              const events: ChallengeEvent[] = [
+                { kind: 'serve_orders', amount: 1 },
+                { kind: 'serve_combos', amount: info.comboSize > 1 ? 1 : 0 },
+                { kind: 'earn_cash', amount: total },
+                { kind: 'serve_recipe', recipeIds: info.items },
+                { kind: 'reach_streak', value: info.streak },
+              ];
+              return {
+                dailyChallenges: events.reduce((st, ev) => applyChallengeProgress(st, ev), prev.dailyChallenges),
+                quickGoals: events.reduce((st, ev) => applyQuickGoalProgress(st, ev), prev.quickGoals),
+              };
+            })(),
           };
         });
       },
@@ -444,6 +485,7 @@ export default function App() {
           ...prev,
           cleanliness: Math.min(100, prev.cleanliness + 6),
           dailyChallenges: applyChallengeProgress(prev.dailyChallenges, { kind: 'clean_tables', amount: 1 }),
+          quickGoals: applyQuickGoalProgress(prev.quickGoals, { kind: 'clean_tables', amount: 1 }),
         }));
       },
       onDirtyChanged: (delta) => {
@@ -528,7 +570,10 @@ export default function App() {
     const t = s.today;
     const starTarget = getDailyStarTarget(s.restaurantLevel);
     const stars = computeDayStars(t.customersServed, t.customersLost, s.cleanliness, starTarget);
-    const starReward = getStarReward(stars, s.restaurantLevel);
+    const starStreak = stars >= 2 ? (s.starStreak ?? 0) + 1 : 0;
+    const starStreakBonusPct = stars >= 2 ? getStarStreakBonusPct(starStreak) : 0;
+    const starReward = Math.round(getStarReward(stars, s.restaurantLevel) * (1 + starStreakBonusPct / 100));
+    const nextSpecial = pickDailySpecial(s.dayNumber + 1, s.unlockedRecipes, s.dailySpecial);
     const report: DayReport = {
       dayNumber: s.dayNumber,
       stats: { ...t },
@@ -541,6 +586,14 @@ export default function App() {
       stars,
       starTarget,
       starReward,
+      starStreak,
+      starStreakBonusPct,
+      tomorrow: {
+        special: nextSpecial,
+        goal: s.quickGoals.current,
+        goalsToChest: goalsUntilChest(s.quickGoals.completed),
+        mastery: findNearestMastery(s.recipeMastery ?? {}, s.unlockedRecipes),
+      },
     };
 
     commitSave((prev) => {
@@ -551,6 +604,8 @@ export default function App() {
         restaurantCash: prev.restaurantCash - paid + starReward,
         totalEarned: prev.totalEarned + starReward,
         totalStars: (prev.totalStars ?? 0) + stars,
+        starStreak,
+        dailySpecial: nextSpecial,
         // Missing payroll upsets the team, which customers notice
         reputation: paid < due ? Math.max(1.0, prev.reputation - 0.15) : prev.reputation,
         dayNumber: prev.dayNumber + 1,
@@ -677,6 +732,47 @@ export default function App() {
     }));
     showToast('Daily Chest Opened!', `+$${reward.toLocaleString()} for finishing all 3 challenges`);
   }, [commitSave, showToast]);
+
+  // --- Quick goal chain: a finished goal pays out after a short beat, then the next one appears ---
+  const [goalFlash, setGoalFlash] = useState<{ reward: number; chest: number } | null>(null);
+  const quickGoalDone = isQuickGoalDone(save.quickGoals);
+  const quickGoalId = save.quickGoals.current?.id;
+  useEffect(() => {
+    if (!quickGoalDone || !quickGoalId) return;
+    const timer = window.setTimeout(() => {
+      const st = saveRef.current.quickGoals;
+      if (!st.current || st.current.id !== quickGoalId || st.current.progress < st.current.target) return;
+      const lv = saveRef.current.restaurantLevel;
+      const reward = st.current.reward;
+      const chest = goalsUntilChest(st.completed) === 1 ? getQuickGoalChestReward(lv) : 0;
+      const completed = st.completed + 1;
+      commitSave((prev) => ({
+        ...prev,
+        restaurantCash: prev.restaurantCash + reward + chest,
+        totalEarned: prev.totalEarned + reward + chest,
+        quickGoals: {
+          completed,
+          current: generateQuickGoal(completed, prev.restaurantLevel, prev.unlockedRecipes, prev.dailySpecial, prev.quickGoals.current?.kind),
+        },
+      }));
+      setGoalFlash({ reward, chest });
+      if (chest > 0) {
+        sound.playLevelUp();
+        haptic(HAPTIC.levelUp);
+        showToast('🎁 Goal Chest!', `+$${(reward + chest).toLocaleString()} for ${QUICK_GOAL_CHEST_EVERY} goals in a row`);
+      } else {
+        sound.playBell();
+        haptic(HAPTIC.success);
+        pushPopup(`Goal done! +$${reward.toLocaleString()}`, 'amber');
+      }
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [quickGoalDone, quickGoalId, commitSave, pushPopup, showToast]);
+  useEffect(() => {
+    if (!goalFlash) return;
+    const t = window.setTimeout(() => setGoalFlash(null), 1600);
+    return () => window.clearTimeout(t);
+  }, [goalFlash]);
 
   const claimableChallenges = countClaimableChallenges(save.dailyChallenges);
   const starTarget = getDailyStarTarget(save.restaurantLevel);
@@ -890,6 +986,10 @@ export default function App() {
         qualityBonus > 1
           ? applyChallengeProgress(prev.dailyChallenges, { kind: 'perfect_cooks', amount: 1 })
           : prev.dailyChallenges,
+      quickGoals:
+        qualityBonus > 1
+          ? applyQuickGoalProgress(prev.quickGoals, { kind: 'perfect_cooks', amount: 1 })
+          : prev.quickGoals,
       restaurantCash: Math.max(0, prev.restaurantCash - ingredientCost),
       tutorialStep: prev.tutorialStep === 0 ? 1 : prev.tutorialStep,
       stats: {
@@ -1782,23 +1882,44 @@ export default function App() {
             </div>
           )}
 
-          {/* Serving streak meter: tips multiply while you keep serving */}
-          {hud.streak.count >= 2 && drawerTab === 'none' && (
+          {/* Right column: serving streak, next quick goal, dish of the day */}
+          {drawerTab === 'none' && !dayReport && (
             <div
-              className={`fixed z-20 pointer-events-none flex items-center gap-1.5 rounded-full border shadow-lg ${
-                compact ? 'right-2 px-2 py-1' : 'right-4 px-3 py-1.5'
-              } ${hud.streak.mult > 1 ? 'bg-orange-600/90 border-orange-300' : 'bg-slate-950/85 border-slate-600'}`}
+              className={`fixed z-20 pointer-events-none flex flex-col items-end gap-1 ${compact ? 'right-2' : 'right-4'}`}
               style={{ top: compact ? 'calc(max(0.5rem, env(safe-area-inset-top)) + 2.9rem)' : '4.5rem' }}
-              aria-label={`Serving streak ${hud.streak.count}, tips times ${hud.streak.mult}`}
             >
-              <Flame className={`${compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} text-yellow-200 fill-yellow-300`} />
-              <span className={`font-mono-num font-extrabold text-white ${compact ? 'text-[11px]' : 'text-xs'}`}>
-                {hud.streak.count}
-                {hud.streak.mult > 1 && <span className="text-yellow-200"> · ×{hud.streak.mult}</span>}
-              </span>
-              <span className="block w-10 h-1 rounded-full bg-black/30 overflow-hidden">
-                <span className="block h-full bg-yellow-200" style={{ width: `${Math.round(hud.streak.timeLeft * 100)}%` }} />
-              </span>
+              {/* Serving streak meter: tips multiply while you keep serving */}
+              {hud.streak.count >= 2 && (
+                <div
+                  className={`flex items-center gap-1.5 rounded-full border shadow-lg ${
+                    compact ? 'px-2 py-1' : 'px-3 py-1.5'
+                  } ${hud.streak.mult > 1 ? 'bg-orange-600/90 border-orange-300' : 'bg-slate-950/85 border-slate-600'}`}
+                  aria-label={`Serving streak ${hud.streak.count}, tips times ${hud.streak.mult}`}
+                >
+                  <Flame className={`${compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} text-yellow-200 fill-yellow-300`} />
+                  <span className={`font-mono-num font-extrabold text-white ${compact ? 'text-[11px]' : 'text-xs'}`}>
+                    {hud.streak.count}
+                    {hud.streak.mult > 1 && <span className="text-yellow-200"> · ×{hud.streak.mult}</span>}
+                  </span>
+                  <span className="block w-10 h-1 rounded-full bg-black/30 overflow-hidden">
+                    <span className="block h-full bg-yellow-200" style={{ width: `${Math.round(hud.streak.timeLeft * 100)}%` }} />
+                  </span>
+                </div>
+              )}
+              {save.tutorialStep >= 4 && (
+                <QuickGoalChip state={save.quickGoals} special={save.dailySpecial} flash={goalFlash} compact={compact} />
+              )}
+              {save.dailySpecial && save.tutorialStep >= 4 && (
+                <span
+                  className={`flex items-center gap-1 rounded-full bg-amber-500/90 border border-amber-200 text-slate-950 font-bold shadow ${
+                    compact ? 'px-1.5 py-0.5 text-[9px]' : 'px-2 py-0.5 text-[10px]'
+                  }`}
+                  aria-label={`Dish of the day: ${RECIPES[save.dailySpecial].name}, plus ${Math.round(DAILY_SPECIAL_BONUS * 100)} percent price`}
+                >
+                  <Star className="w-2.5 h-2.5 fill-slate-950" />
+                  {RECIPES[save.dailySpecial].name} +{Math.round(DAILY_SPECIAL_BONUS * 100)}%
+                </span>
+              )}
             </div>
           )}
 
@@ -2093,6 +2214,7 @@ export default function App() {
           restaurantCash={save.restaurantCash}
           pendingOrders={hud.activeOrders}
           suggestedOrder={cookModal.suggestedOrder}
+          dailySpecial={save.dailySpecial}
           onComplete={handleCookingComplete}
           onOpenSpecialtyMenu={() => {
             setCookModal(null);
