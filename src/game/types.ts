@@ -393,7 +393,10 @@ export interface NearbyPrompt {
     | 'open_shop'
     | 'open_bank'
     | 'open_supermarket'
-    | 'open_home';
+    | 'open_home'
+    | 'put_down'
+    | 'pick_up'
+    | 'trash';
   stationType?: StationType;
   tableId?: number;
   shopTab?: DrawerTab;

@@ -46,6 +46,7 @@ import {
   createPrettyDiningFloorTextures,
   createAntiFatigueMatMesh,
   createFloorDrainMesh,
+  createKitchenBinMesh,
   createQuarryTileFloorTextures,
   createRangeHoodMesh,
   createRefrigeratorMesh,
@@ -293,6 +294,12 @@ export class RestaurantWorldEngine {
   private customers: SimCustomer[] = [];
   private orders: CustomerOrder[] = [];
   private readyDishes: { id: string; recipeId: RecipeId; qualityBonus: number }[] = [];
+  /** Pass counter (shelf for ready dishes) and kitchen bin positions, set on each rebuild. */
+  private passPos = { x: 0, z: 0 };
+  private binPos = { x: 0, z: 0 };
+  private passDishGroup: THREE.Group | null = null;
+  private passDishKey = '';
+  static readonly PASS_SLOTS = 6;
   private staffAgents: SimStaff[] = [];
 
   private spawnTimer = 1.5;
@@ -394,6 +401,54 @@ export class RestaurantWorldEngine {
     } else {
       this.slowWindows = 0;
     }
+  }
+
+  /** Puts the carried dish on the pass counter (waiters or the player can serve it later). */
+  public putHeldDishOnCounter(): boolean {
+    if (!this.heldRecipe || this.readyDishes.length >= RestaurantWorldEngine.PASS_SLOTS) return false;
+    this.readyDishes.push({
+      id: `dish_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      recipeId: this.heldRecipe,
+      qualityBonus: this.heldQuality,
+    });
+    this.clearHeldDish();
+    sound.playClick();
+    return true;
+  }
+
+  /** Throws the carried dish in the bin. */
+  public trashHeldDish(): boolean {
+    if (!this.heldRecipe) return false;
+    this.clearHeldDish();
+    sound.playClick();
+    return true;
+  }
+
+  /** Picks a dish up from the pass counter, preferring one a customer is waiting for. */
+  public pickUpFromCounter(): boolean {
+    if (this.heldRecipe || this.readyDishes.length === 0) return false;
+    const wanted = new Set(this.orders.filter((o) => o.status === 'waiting').map((o) => o.recipeId));
+    let idx = this.readyDishes.findIndex((d) => wanted.has(d.recipeId));
+    if (idx < 0) idx = 0;
+    const [dish] = this.readyDishes.splice(idx, 1);
+    this.setHeldDish(dish.recipeId, dish.qualityBonus);
+    sound.playClick();
+    return true;
+  }
+
+  /** Rebuilds the dish meshes on the pass counter when its contents change. */
+  private syncPassDishes() {
+    if (!this.passDishGroup) return;
+    const key = this.readyDishes.map((d) => d.id).join('|');
+    if (key === this.passDishKey) return;
+    this.passDishKey = key;
+    this.passDishGroup.clear();
+    this.readyDishes.slice(0, RestaurantWorldEngine.PASS_SLOTS).forEach((d, i) => {
+      const dish = createDishMesh(d.recipeId);
+      dish.scale.setScalar(0.85);
+      dish.position.set(this.passPos.x, 1.035, this.passPos.z - 1.1 + i * 0.44);
+      this.passDishGroup!.add(dish);
+    });
   }
 
   /** Registers a callback that runs after every rendered frame (pass null to clear). */
@@ -1039,6 +1094,19 @@ export class RestaurantWorldEngine {
 
     const passX = minX + 5.05;
     const passZ = 0.8;
+    this.passPos = { x: passX, z: passZ };
+    // Dishes waiting on the pass counter are shown on its marble top
+    this.passDishGroup = new THREE.Group();
+    this.passDishKey = '';
+    this.restaurantGroup.add(this.passDishGroup);
+
+    // Kitchen waste bin (throw away wrong dishes)
+    const bin = createKitchenBinMesh();
+    this.binPos = { x: minX + 3.2, z: minZ + 0.62 };
+    bin.position.set(this.binPos.x, 0.11, this.binPos.z);
+    this.restaurantGroup.add(bin);
+    this.restaurantColliders.push({ kind: 'circle', x: this.binPos.x, z: this.binPos.z, r: 0.3 });
+
     for (const [lx, lz] of [
       [passX, passZ - 0.45],
       [centerX + 2.2, -0.6],
@@ -1850,6 +1918,12 @@ export class RestaurantWorldEngine {
       this.callbacks.onShopRequested('city', 'market');
     } else if (prompt.actionType === 'open_home') {
       this.callbacks.onShopRequested('lifestyle', 'housing');
+    } else if (prompt.actionType === 'put_down') {
+      this.putHeldDishOnCounter();
+    } else if (prompt.actionType === 'pick_up') {
+      this.pickUpFromCounter();
+    } else if (prompt.actionType === 'trash') {
+      this.trashHeldDish();
     }
   }
 
@@ -1893,6 +1967,38 @@ export class RestaurantWorldEngine {
           label: `Hand Takeaway ${RECIPES[this.heldRecipe].name}`,
           sublabel: takeOrder.customerName,
           actionType: 'serve_takeaway',
+        };
+      }
+    }
+
+    // 1b. Pass counter (put down / pick up) and waste bin (throw away)
+    if (playerInside) {
+      const nearPass = Math.hypot(this.playerPos.x - this.passPos.x, this.playerPos.z - this.passPos.z) < 1.9;
+      if (this.heldRecipe) {
+        if (Math.hypot(this.playerPos.x - this.binPos.x, this.playerPos.z - this.binPos.z) < 1.4) {
+          return {
+            id: 'trash',
+            label: `Throw away ${RECIPES[this.heldRecipe].name}`,
+            sublabel: 'Waste bin',
+            actionType: 'trash',
+          };
+        }
+        if (nearPass && this.readyDishes.length < RestaurantWorldEngine.PASS_SLOTS) {
+          return {
+            id: 'put_down',
+            label: `Put ${RECIPES[this.heldRecipe].name} on pass`,
+            sublabel: 'Serve it later',
+            actionType: 'put_down',
+          };
+        }
+      } else if (nearPass && this.readyDishes.length > 0) {
+        const wanted = new Set(this.orders.filter((o) => o.status === 'waiting').map((o) => o.recipeId));
+        const dish = this.readyDishes.find((d) => wanted.has(d.recipeId)) ?? this.readyDishes[0];
+        return {
+          id: 'pick_up',
+          label: `Pick up ${RECIPES[dish.recipeId].name}`,
+          sublabel: `${this.readyDishes.length} on the pass`,
+          actionType: 'pick_up',
         };
       }
     }
@@ -2220,6 +2326,8 @@ export class RestaurantWorldEngine {
 
     // 4. Particles
     this.updateParticles(dt);
+
+    this.syncPassDishes();
 
     // Machines with a customer waiting for one of their dishes glow and pulse
     this.stationPulseTime += dt;
