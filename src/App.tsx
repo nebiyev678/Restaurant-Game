@@ -376,6 +376,7 @@ export default function App() {
     save.activeHouseId,
     save.ownedFurniture,
     staffSyncKey,
+    save.unlockedRecipes,
   ]);
 
   // Graphics quality (Settings → Graphics); 'auto' also lets the engine step down if FPS drops
@@ -1004,8 +1005,51 @@ export default function App() {
           )}
 
           {/* Projected 3D Order & Clean Bubbles */}
+          {/* Floating machine signs: dish pictures show what each machine makes */}
+          {hud.bubbles
+            .filter((b) => b.kind === 'station' && b.stationType)
+            .map((b) => {
+              const pending = b.pendingCount ?? 0;
+              return (
+                <button
+                  key={b.id}
+                  onClick={() => {
+                    haptic(HAPTIC.tap);
+                    engineRef.current?.openCookAtStation(b.stationType!);
+                  }}
+                  aria-label={`${b.label}: ${(b.recipeIds ?? []).map((id) => RECIPES[id].name).join(', ')}${
+                    pending ? `, ${pending} waiting` : ''
+                  }`}
+                  style={{ left: `${b.screenX}px`, top: `${b.screenY}px`, transform: 'translate(-50%, -100%)' }}
+                  className={`pointer-events-auto absolute flex items-center gap-1 rounded-full border shadow-md cursor-pointer ${
+                    compact ? 'pl-0.5 pr-1.5 py-0.5' : 'pl-1 pr-2 py-1'
+                  } ${pending ? 'bg-emerald-600/95 border-emerald-300' : 'bg-slate-950/80 border-slate-600/70'}`}
+                >
+                  <span className="flex -space-x-1.5">
+                    {(b.recipeIds ?? []).slice(0, 3).map((id) => (
+                      <PreviewThumb
+                        key={id}
+                        kind="recipe"
+                        id={id}
+                        alt={RECIPES[id].name}
+                        className={`${compact ? 'w-5 h-5' : 'w-6 h-6'} rounded-full ring-1 ring-slate-900`}
+                      />
+                    ))}
+                  </span>
+                  <span className={`font-bold text-white whitespace-nowrap ${compact ? 'text-[9px]' : 'text-[11px]'}`}>
+                    {b.label}
+                  </span>
+                  {pending > 0 && (
+                    <span className="min-w-4 h-4 px-1 rounded-full bg-white text-emerald-700 text-[9px] font-extrabold flex items-center justify-center">
+                      {pending}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+
           {compact &&
-            hud.bubbles.map((b) => {
+            hud.bubbles.filter((b) => b.kind !== 'station').map((b) => {
               const pct = Math.max(0, Math.min(100, b.patience ?? 100));
               return (
                 <button
@@ -1049,7 +1093,7 @@ export default function App() {
                 </button>
               );
             })}
-          {!compact && hud.bubbles.map((b) => (
+          {!compact && hud.bubbles.filter((b) => b.kind !== 'station').map((b) => (
             <button
               key={b.id}
               onClick={() => {

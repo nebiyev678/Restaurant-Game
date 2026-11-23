@@ -43,7 +43,9 @@ export const CookingMiniGame: React.FC<CookingMiniGameProps> = ({
       : selectableIds[0] ?? 'burger';
 
   const [selectedRecipe, setSelectedRecipe] = useState<RecipeId>(initialRecipe);
-  const [stepIndex, setStepIndex] = useState<number>(0); // 0 = prep, 1 = sizzle timing, 2 = plate
+  // One-tap cooking: the timing bar runs as soon as the window opens (1 = timing, 2 = plating flash)
+  const [stepIndex, setStepIndex] = useState<number>(1);
+  const completedRef = useRef(false);
   const [gaugePos, setGaugePos] = useState<number>(0); // 0..100
   const [qualityBonus, setQualityBonus] = useState<number>(1.0);
   const [timingResult, setTimingResult] = useState<'none' | 'perfect' | 'good'>('none');
@@ -57,18 +59,18 @@ export const CookingMiniGame: React.FC<CookingMiniGameProps> = ({
   const specialtyMult = station === 'specialty' ? 1 + (equipmentLevel - 1) * 0.1 : 1;
   const displayPrice = Math.round(def.sellPrice * specialtyMult);
 
-  // Sweet spot widens with equipment level
-  const sweetWidth = Math.min(36, 18 + (equipmentLevel - 1) * 3.5);
+  // Generous sweet spot for beginners; widens further with equipment level
+  const sweetWidth = Math.min(44, 28 + (equipmentLevel - 1) * 3);
   const sweetStart = 50 - sweetWidth / 2;
   const sweetEnd = 50 + sweetWidth / 2;
 
   useEffect(() => {
-    if (stepIndex !== 1 || isEmptySpecialty) {
+    if (stepIndex !== 1 || isEmptySpecialty || !canAfford) {
       cancelAnimationFrame(animRef.current);
       return;
     }
     lastTimeRef.current = performance.now();
-    const speed = Math.max(55, 115 - (equipmentLevel - 1) * 8); // % per sec
+    const speed = Math.max(42, 70 - (equipmentLevel - 1) * 5); // % per sec (calm, readable)
     const tick = (now: number) => {
       const dt = Math.min(0.05, (now - lastTimeRef.current) / 1000);
       lastTimeRef.current = now;
@@ -87,7 +89,7 @@ export const CookingMiniGame: React.FC<CookingMiniGameProps> = ({
     };
     animRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(animRef.current);
-  }, [stepIndex, equipmentLevel, isEmptySpecialty]);
+  }, [stepIndex, equipmentLevel, isEmptySpecialty, canAfford]);
 
   const handleStepAction = () => {
     if (!canAfford || isEmptySpecialty) return;
@@ -95,22 +97,28 @@ export const CookingMiniGame: React.FC<CookingMiniGameProps> = ({
       sound.playClick();
       setStepIndex(1);
     } else if (stepIndex === 1) {
+      if (completedRef.current) return;
+      completedRef.current = true;
       const inSweet = gaugePos >= sweetStart && gaugePos <= sweetEnd;
       if (inSweet) {
         sound.playPerfectCook();
       } else {
         sound.playSizzle();
       }
-      setQualityBonus(inSweet ? 1.25 : 1.0);
+      const bonus = inSweet ? 1.25 : 1.0;
+      setQualityBonus(bonus);
       setTimingResult(inSweet ? 'perfect' : 'good');
       setStepIndex(2);
+      // Dish goes straight into the chef's hands after a short "Perfect!" flash
+      window.setTimeout(() => onComplete(selectedRecipe, bonus, actualCost), 450);
     } else if (stepIndex === 2) {
       onComplete(selectedRecipe, qualityBonus, actualCost);
     }
   };
 
   const handleQuickPrep = () => {
-    if (!canAfford || isEmptySpecialty) return;
+    if (!canAfford || isEmptySpecialty || completedRef.current) return;
+    completedRef.current = true;
     sound.playSizzle();
     onComplete(selectedRecipe, 1.0, actualCost);
   };
@@ -219,7 +227,9 @@ export const CookingMiniGame: React.FC<CookingMiniGameProps> = ({
                     key={id}
                     onClick={() => {
                       setSelectedRecipe(id);
-                      setStepIndex(0);
+                      setStepIndex(1);
+                      setGaugePos(0);
+                      dirRef.current = 1;
                       setTimingResult('none');
                       sound.playClick();
                     }}
@@ -266,36 +276,14 @@ export const CookingMiniGame: React.FC<CookingMiniGameProps> = ({
                 </span>
               </div>
 
-              {/* 3-Step Visual Progress */}
-              <div className="grid grid-cols-3 gap-2 mb-3">
-                {def.steps.map((label, idx) => {
-                  const done = idx < stepIndex;
-                  const current = idx === stepIndex;
-                  return (
-                    <div
-                      key={label}
-                      className={`rounded-lg p-2 text-xs border ${
-                        done
-                          ? 'bg-emerald-950/60 border-emerald-600/60 text-emerald-300'
-                          : current
-                            ? 'bg-amber-950/50 border-amber-500 text-amber-200 font-semibold'
-                            : 'bg-slate-950/60 border-slate-800 text-slate-500'
-                      }`}
-                    >
-                      <div className="flex items-center gap-1 mb-0.5">
-                        {done ? <Check className="w-3.5 h-3.5" /> : <span className="font-mono-num">{idx + 1}.</span>}
-                        <span className="truncate">{label}</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+              {/* Recipe steps as one short line (cooking is a single tap) */}
+              <p className="mb-2 text-[11px] text-slate-400 truncate">{def.steps.join(' → ')}</p>
 
               {/* Step 1 Interactive Heat / Sizzle Timing Bar */}
               {stepIndex === 1 && (
                 <div className="mb-3">
                   <div className="flex justify-between text-xs text-slate-300 mb-1">
-                    <span>Tap inside the golden zone for +25% Perfect Quality!</span>
+                    <span>Tap in the green for a Perfect dish (+25%)</span>
                     <span className="font-mono-num text-amber-400">{Math.round(gaugePos)}%</span>
                   </div>
                   <div
@@ -351,10 +339,10 @@ export const CookingMiniGame: React.FC<CookingMiniGameProps> = ({
                     : stepIndex === 0
                       ? `Start: ${def.steps[0]}`
                       : stepIndex === 1
-                        ? station === 'specialty'
-                          ? 'Lock Perfect Finish!'
-                          : 'Stop Heat & Flip!'
-                        : 'Plate & Pick Up Dish'}
+                        ? 'Tap to Cook!'
+                        : timingResult === 'perfect'
+                          ? 'Perfect! Plating…'
+                          : 'Plating…'}
                 </button>
 
                 <button
