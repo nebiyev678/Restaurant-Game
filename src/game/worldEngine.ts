@@ -8,8 +8,12 @@ import {
   CLOTHING_CATALOG,
   HOUSE_CATALOG,
   RECIPES,
+  STATION_INFO,
   VEHICLE_CATALOG,
+  getActiveStations,
   getCleanlinessPatienceMult,
+  getEarlyPatienceMult,
+  getEarlySpawnDelay,
   getCleanlinessReputationMult,
   getPrestigeTipBonus,
   getRestaurantTier,
@@ -270,7 +274,10 @@ export class RestaurantWorldEngine {
 
   // Simulation entities
   private tables: SimTable[] = [];
-  private stations: { type: StationType; x: number; z: number; ring: THREE.Mesh }[] = [];
+  /** Installed (active) machines. x/z = where the cook stands; mx/mz = the machine itself. */
+  private stations: { type: StationType; x: number; z: number; mx: number; mz: number; ring: THREE.Mesh }[] = [];
+  private lastStationsKey = '';
+  private stationPulseTime = 0;
   private registerPos = new THREE.Vector3(-5.5, 0, -4.4);
   private customers: SimCustomer[] = [];
   private orders: CustomerOrder[] = [];
@@ -374,6 +381,31 @@ export class RestaurantWorldEngine {
     } else {
       this.slowWindows = 0;
     }
+  }
+
+  /** A plain kitchen counter standing in for a machine the player hasn't unlocked yet. */
+  private createEmptyCounterMesh(isBar: boolean): THREE.Group {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(
+      new THREE.BoxGeometry(isBar ? 1.8 : 1.1, 0.9, isBar ? 1.0 : 1.75),
+      new THREE.MeshStandardMaterial({ color: '#cbd5e1', roughness: 0.6 })
+    );
+    body.position.y = 0.45;
+    body.castShadow = true;
+    body.receiveShadow = true;
+    const top = new THREE.Mesh(
+      new THREE.BoxGeometry(isBar ? 1.9 : 1.2, 0.06, isBar ? 1.08 : 1.85),
+      new THREE.MeshStandardMaterial({ color: '#e2e8f0', roughness: 0.35, metalness: 0.2 })
+    );
+    top.position.y = 0.93;
+    g.add(body, top);
+    return g;
+  }
+
+  /** Opens the cooking window for a machine (from its floating sign). */
+  public openCookAtStation(type: StationType) {
+    const pending = this.orders.find((o) => o.status === 'waiting' && RECIPES[o.recipeId].station === type) ?? null;
+    this.callbacks.onCookRequested(type, pending);
   }
 
   /** Tap at a screen point (used by the touch-controls overlay to forward short taps). */
@@ -591,9 +623,16 @@ export class RestaurantWorldEngine {
 
     // 1. Rebuild Restaurant Structure & Tables if tier or cafe theme changed
     const activeThemeId = save.activeCafeThemeId ?? 'classic_bistro';
-    if (force || this.lastTier !== tierInfo.tier || this.lastCafeThemeId !== activeThemeId) {
+    const stationsKey = getActiveStations(save.unlockedRecipes).join(',');
+    if (
+      force ||
+      this.lastTier !== tierInfo.tier ||
+      this.lastCafeThemeId !== activeThemeId ||
+      this.lastStationsKey !== stationsKey
+    ) {
       this.lastTier = tierInfo.tier;
       this.lastCafeThemeId = activeThemeId;
+      this.lastStationsKey = stationsKey;
       this.rebuildRestaurant(tierInfo.tier, tierInfo.tableCount);
     }
 
@@ -1014,8 +1053,11 @@ export class RestaurantWorldEngine {
       { type: 'bar', x: centerX - 1.6, z: minZ + 1.02 },
     ];
 
+    const activeStations = new Set(getActiveStations(this.saveRef.current.unlockedRecipes));
     stationLayout.forEach((st) => {
-      const mesh = createKitchenStationMesh(st.type);
+      const isActive = activeStations.has(st.type);
+      // Machines not needed yet are plain empty counters (fewer choices for new players)
+      const mesh = isActive ? createKitchenStationMesh(st.type) : this.createEmptyCounterMesh(st.type === 'bar');
       mesh.position.set(st.x, 0.1, st.z);
       mesh.rotation.y = st.type === 'bar' ? 0 : Math.PI / 2;
       this.restaurantGroup.add(mesh);
@@ -1038,6 +1080,8 @@ export class RestaurantWorldEngine {
         });
       }
 
+      if (!isActive) return;
+
       // Subtle floor interaction highlight ring in front of station
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(0.55, 0.72, 24),
@@ -1054,7 +1098,7 @@ export class RestaurantWorldEngine {
       ring.position.set(rx, 0.13, rz);
       this.restaurantGroup.add(ring);
 
-      this.stations.push({ type: st.type, x: rx, z: rz, ring });
+      this.stations.push({ type: st.type, x: rx, z: rz, mx: st.x, mz: st.z, ring });
     });
 
     // Glass Sneeze-Guard Service Pass-Through Counter between Kitchen Line & Dining Floor
@@ -1832,18 +1876,7 @@ export class RestaurantWorldEngine {
           const pending = this.orders.find(
             (o) => o.status === 'waiting' && RECIPES[o.recipeId].station === st.type
           );
-          const stationLabel =
-            st.type === 'grill'
-              ? 'Grill & Range'
-              : st.type === 'prep'
-                ? 'Prep Counter'
-                : st.type === 'fryer'
-                  ? 'Deep Fryer'
-                  : st.type === 'oven'
-                    ? 'Pizza Oven'
-                    : st.type === 'specialty'
-                      ? 'Specialty Station'
-                      : 'Espresso Bar';
+          const stationLabel = STATION_INFO[st.type].name;
           return {
             id: `cook_${st.type}`,
             label: pending ? `Cook ${RECIPES[pending.recipeId].name}` : `Use ${stationLabel}`,
@@ -2143,6 +2176,23 @@ export class RestaurantWorldEngine {
 
     // 4. Particles
     this.updateParticles(dt);
+
+    // Machines with a customer waiting for one of their dishes glow and pulse
+    this.stationPulseTime += dt;
+    for (const st of this.stations) {
+      const hasOrder = this.orders.some((o) => o.status === 'waiting' && RECIPES[o.recipeId].station === st.type);
+      const mat = st.ring.material as THREE.MeshBasicMaterial;
+      if (hasOrder) {
+        const k = 0.5 + 0.5 * Math.sin(this.stationPulseTime * 5);
+        mat.color.set('#22c55e');
+        mat.opacity = 0.55 + k * 0.4;
+        st.ring.scale.setScalar(1 + k * 0.18);
+      } else {
+        mat.color.set(st.type === 'specialty' ? '#ec4899' : '#f97316');
+        mat.opacity = 0.35;
+        st.ring.scale.setScalar(1);
+      }
+    }
 
     // 5. Camera Follow
     const focus = this.inVehicle ? this.carPos : this.playerPos;
@@ -2760,7 +2810,7 @@ export class RestaurantWorldEngine {
     this.spawnTimer -= dt;
     const maxCustomers = this.tables.length + 2;
     if (this.spawnTimer <= 0 && this.customers.length < maxCustomers) {
-      const interval = Math.max(2.6, 6.2 - save.reputation * 0.58);
+      const interval = Math.max(2.6, 6.2 - save.reputation * 0.58) + getEarlySpawnDelay(save.restaurantLevel);
       this.spawnTimer = interval;
       this.spawnCustomer();
     }
@@ -2768,7 +2818,9 @@ export class RestaurantWorldEngine {
     const mgrCount = save.staff.filter((s) => s.role === 'manager').length;
     const decorMult = 1 + (save.equipmentLevels.decor - 1) * 0.1;
     const patienceDecayBase =
-      ((mgrCount > 0 ? 1.85 : 2.55) / decorMult) * getCleanlinessPatienceMult(save.cleanliness);
+      ((mgrCount > 0 ? 1.85 : 2.55) / decorMult) *
+      getCleanlinessPatienceMult(save.cleanliness) *
+      getEarlyPatienceMult(save.restaurantLevel);
 
     // Avoidance array layout: [player (+parkedCar?), ...customers, ...staff]
     const customerBaseIdx = !this.inVehicle && this.playerCarParts ? 2 : 1;
@@ -3051,7 +3103,8 @@ export class RestaurantWorldEngine {
     const freeClean = this.tables.filter((t) => !t.occupiedBy && !t.dirty);
     const isTakeaway = freeClean.length === 0;
     const existingTakeaway = this.customers.filter((c) => c.tableId === -1);
-    if (isTakeaway && existingTakeaway.length >= 2) {
+    const takeawayCap = save.restaurantLevel < 3 ? 1 : 2;
+    if (isTakeaway && existingTakeaway.length >= takeawayCap) {
       return;
     }
 
@@ -3522,6 +3575,28 @@ export class RestaurantWorldEngine {
             tableId: tbl.id,
           });
         }
+      }
+    }
+
+    // Floating machine signs: which dishes each machine makes (shown while in the restaurant)
+    if (this.isInsideRestaurant(this.playerPos.x, this.playerPos.z) && !this.inVehicle) {
+      const unlocked = this.saveRef.current.unlockedRecipes;
+      for (const st of this.stations) {
+        const p = this.projectToScreen(st.mx, 2.15, st.mz);
+        if (!p.visible) continue;
+        const recipeIds = unlocked.filter((id) => RECIPES[id].station === st.type);
+        bubbles.push({
+          id: `station_${st.type}`,
+          screenX: p.x,
+          screenY: p.y,
+          visible: true,
+          kind: 'station',
+          label: STATION_INFO[st.type].short,
+          stationType: st.type,
+          recipeIds,
+          pendingCount: this.orders.filter((o) => o.status === 'waiting' && RECIPES[o.recipeId].station === st.type)
+            .length,
+        });
       }
     }
 

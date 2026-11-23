@@ -352,13 +352,17 @@ export interface ProjectedBubble {
   screenX: number;
   screenY: number;
   visible: boolean;
-  kind: 'order' | 'eating' | 'dirty' | 'takeaway' | 'zone' | 'cookReady';
+  kind: 'order' | 'eating' | 'dirty' | 'takeaway' | 'zone' | 'cookReady' | 'station';
   recipeId?: RecipeId;
   patience?: number;
   label: string;
   archetype?: CustomerArchetype;
   tableId?: number;
   orderId?: string;
+  /** Station signs: the machine type, the dishes it makes, and how many orders wait for it. */
+  stationType?: StationType;
+  recipeIds?: RecipeId[];
+  pendingCount?: number;
 }
 
 export interface FloatingPopup {

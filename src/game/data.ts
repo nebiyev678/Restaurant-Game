@@ -17,6 +17,7 @@ import {
   SpecialtyLineDef,
   SpecialtyLineId,
   StaffDef,
+  StationType,
   VehicleDef,
 } from './types';
 
@@ -1106,6 +1107,49 @@ export function getXpForNextLevel(level: number): number {
 export function getEquipmentUpgradeCost(id: EquipmentId, currentLevel: number): number {
   const def = EQUIPMENT_CATALOG[id];
   return Math.round(def.baseCost * Math.pow(1.55, currentLevel - 1));
+}
+
+// ---------------------------------------------------------------------------
+// Kitchen stations & early-game difficulty
+// ---------------------------------------------------------------------------
+
+export const STATION_INFO: Record<StationType, { name: string; short: string }> = {
+  grill: { name: 'Grill & Range', short: 'Grill' },
+  fryer: { name: 'Deep Fryer', short: 'Fryer' },
+  prep: { name: 'Prep Counter', short: 'Prep' },
+  oven: { name: 'Pizza Oven', short: 'Oven' },
+  bar: { name: 'Espresso Bar', short: 'Bar' },
+  specialty: { name: 'Specialty Station', short: 'Specialty' },
+};
+
+/**
+ * Only machines that cook at least one unlocked recipe are installed in the kitchen.
+ * A new player starts with just the Grill (burger) and the Fryer (fries); every
+ * other machine appears the moment a recipe that needs it is unlocked.
+ */
+export function getActiveStations(unlockedRecipes: RecipeId[]): StationType[] {
+  const set = new Set<StationType>();
+  unlockedRecipes.forEach((id) => {
+    const def = RECIPES[id];
+    if (def) set.add(def.station);
+  });
+  return (['grill', 'fryer', 'prep', 'oven', 'bar', 'specialty'] as StationType[]).filter((s) => set.has(s));
+}
+
+/** Customers are much more patient while the player is learning (level 1-9). */
+export function getEarlyPatienceMult(restaurantLevel: number): number {
+  if (restaurantLevel <= 3) return 0.5;
+  if (restaurantLevel <= 6) return 0.65;
+  if (restaurantLevel <= 9) return 0.82;
+  return 1;
+}
+
+/** Extra seconds between arrivals early on, so new players are never swamped. */
+export function getEarlySpawnDelay(restaurantLevel: number): number {
+  if (restaurantLevel <= 2) return 3.5;
+  if (restaurantLevel <= 4) return 2;
+  if (restaurantLevel <= 6) return 1;
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
