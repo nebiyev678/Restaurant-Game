@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, Moon, Star, TrendingDown, TrendingUp, X } from 'lucide-react';
+import { AlertTriangle, Flame, Gift, Medal, Moon, Star, Target, TrendingDown, TrendingUp, X } from 'lucide-react';
 import { DayReport } from '../game/types';
+import { DAILY_SPECIAL_BONUS, describeQuickGoal, getStarStreakBonusPct, RECIPES } from '../game/data';
 
 interface DayReportCardProps {
   report: DayReport;
@@ -20,7 +21,7 @@ const money = (n: number) => `$${Math.round(n).toLocaleString()}`;
 export const DayReportCard: React.FC<DayReportCardProps> = ({
   report,
   onClose,
-  autoCloseMs = 9000,
+  autoCloseMs = 12000,
   compact = false,
 }) => {
   const [expanded, setExpanded] = useState(!compact);
@@ -95,7 +96,10 @@ export const DayReportCard: React.FC<DayReportCardProps> = ({
             {s.customersServed}/{report.starTarget} served for ★★
           </p>
           {report.starReward > 0 && (
-            <p className="font-mono-num text-xs font-bold text-amber-300">+${report.starReward.toLocaleString()} bonus</p>
+            <p className="font-mono-num text-xs font-bold text-amber-300">
+              +${report.starReward.toLocaleString()} bonus
+              {report.starStreakBonusPct > 0 && <span className="text-orange-300"> (+{report.starStreakBonusPct}%)</span>}
+            </p>
           )}
         </div>
       </div>
@@ -177,6 +181,76 @@ export const DayReportCard: React.FC<DayReportCardProps> = ({
         )}
       </div>
       )}
+
+      <TomorrowHooks report={report} />
+    </div>
+  );
+};
+
+/** "Come back tomorrow" reasons: dish of the day, star streak, the open goal, a medal within reach. */
+const TomorrowHooks: React.FC<{ report: DayReport }> = ({ report }) => {
+  const t = report.tomorrow;
+  if (!t) return null;
+  const nextStreakPct = getStarStreakBonusPct(report.starStreak + 1);
+  const rows: { icon: React.ReactNode; text: React.ReactNode }[] = [];
+
+  if (t.special) {
+    rows.push({
+      icon: <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-300" />,
+      text: (
+        <>
+          <b className="text-amber-200">{RECIPES[t.special].name} Day</b> · sells +{Math.round(DAILY_SPECIAL_BONUS * 100)}% and more guests order it
+        </>
+      ),
+    });
+  }
+  rows.push({
+    icon: <Flame className={`w-3.5 h-3.5 ${report.starStreak > 0 ? 'fill-orange-400 text-orange-300' : 'text-slate-500'}`} />,
+    text:
+      report.starStreak > 0 ? (
+        <>
+          <b className="text-orange-200">{report.starStreak}-day ★★ streak</b> · ★★ tomorrow = +{nextStreakPct}% star bonus
+        </>
+      ) : (
+        <>Get ★★ tomorrow to start a star streak (up to +100% bonus)</>
+      ),
+  });
+  if (t.goal) {
+    const left = t.goal.target - t.goal.progress;
+    rows.push({
+      icon: t.goalsToChest === 1 ? <Gift className="w-3.5 h-3.5 text-yellow-300" /> : <Target className="w-3.5 h-3.5 text-amber-300" />,
+      text: (
+        <>
+          {describeQuickGoal(t.goal)}
+          {t.goal.progress > 0 && left > 0 && <span className="text-emerald-300"> · almost there</span>}
+          {' · '}
+          {t.goalsToChest === 1 ? 'opens a chest!' : `${t.goalsToChest} goals to a chest`}
+        </>
+      ),
+    });
+  }
+  if (t.mastery) {
+    rows.push({
+      icon: <Medal className="w-3.5 h-3.5 text-sky-300" />,
+      text: (
+        <>
+          {RECIPES[t.mastery.recipeId].name}: {t.mastery.remaining} more for {t.mastery.tierName}
+        </>
+      ),
+    });
+  }
+
+  return (
+    <div className="px-3.5 pb-2.5 pt-2 border-t border-slate-800 bg-slate-900/50">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-300 mb-1">Tomorrow</p>
+      <ul className="space-y-1">
+        {rows.map((r, i) => (
+          <li key={i} className="flex items-start gap-1.5 text-[11px] leading-snug text-slate-200">
+            <span className="shrink-0 mt-px">{r.icon}</span>
+            <span>{r.text}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 };

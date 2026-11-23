@@ -300,6 +300,17 @@ export interface DayReport {
   stars: number;
   starTarget: number;
   starReward: number;
+  /** Consecutive days with 2+ stars (including this one) and the extra % it added to the star reward. */
+  starStreak: number;
+  starStreakBonusPct: number;
+  /** "Come back tomorrow" hooks shown under the summary. */
+  tomorrow: {
+    special: RecipeId | null;
+    goal: QuickGoal | null;
+    goalsToChest: number;
+    /** Nearest recipe medal, if it is only a few orders away. */
+    mastery: { recipeId: RecipeId; tierName: string; remaining: number } | null;
+  };
 }
 
 export interface SaveState {
@@ -361,6 +372,28 @@ export interface SaveState {
   dailyChallenges: DailyChallengeState;
   /** Lifetime stars earned from daily ratings. */
   totalStars: number;
+  /** Always-on chain of short goals (a chest every QUICK_GOAL_CHEST_EVERY goals). */
+  quickGoals: QuickGoalState;
+  /** Today's featured dish (+25% price, ordered more often); rolls over each in-game day. */
+  dailySpecial: RecipeId | null;
+  /** Consecutive in-game days closed with 2+ stars. */
+  starStreak: number;
+}
+
+/** A short goal that takes a minute or two; finishing it immediately reveals the next one. */
+export interface QuickGoal {
+  id: string;
+  kind: DailyChallengeKind;
+  recipeId?: RecipeId;
+  target: number;
+  progress: number;
+  reward: number;
+}
+
+export interface QuickGoalState {
+  /** Goals finished so far (lifetime); position in the chest cycle is completed % chest size. */
+  completed: number;
+  current: QuickGoal | null;
 }
 
 export type DailyChallengeKind =
