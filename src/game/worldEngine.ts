@@ -8,6 +8,9 @@ import {
   HOUSE_CATALOG,
   RECIPES,
   VEHICLE_CATALOG,
+  getCleanlinessPatienceMult,
+  getCleanlinessReputationMult,
+  getPrestigeTipBonus,
   getRestaurantTier,
 } from './data';
 import {
@@ -169,6 +172,10 @@ export interface EngineCallbacks {
   onDeliveryIncome: (amount: number) => void;
   onTableCleaned: () => void;
   onDirtyChanged: (cleanlinessDelta: number) => void;
+  /** Fired once when the in-game clock passes midnight during active play. */
+  onDayEnded: () => void;
+  /** Fired when a hired staff member finishes a task (cooking, serving, cleaning, checkout). */
+  onStaffTaskDone: (staffId: string) => void;
 }
 
 const CUSTOMER_NAMES = [
@@ -268,6 +275,8 @@ export class RestaurantWorldEngine {
 
   private spawnTimer = 1.5;
   private deliveryTimer = 14;
+  /** Last observed timeOfDay, used to detect the midnight rollover (including external jumps). */
+  private lastTimeOfDay = -1;
   private hudSyncTimer = 0;
   private lastTier = -1;
   private lastCafeThemeId = '';
@@ -575,6 +584,9 @@ export class RestaurantWorldEngine {
   public syncDynamicWorld(force = false) {
     const save = this.saveRef.current;
     const tierInfo = getRestaurantTier(save.restaurantLevel);
+
+    // A forced sync (new career / reset) must not be mistaken for a midnight rollover.
+    if (force) this.lastTimeOfDay = -1;
 
     // 1. Rebuild Restaurant Structure & Tables if tier or cafe theme changed
     const activeThemeId = save.activeCafeThemeId ?? 'classic_bistro';
@@ -1933,14 +1945,27 @@ export class RestaurantWorldEngine {
     const activeTheme =
       CAFE_THEMES.find((t) => t.id === (save.activeCafeThemeId ?? 'classic_bistro')) ?? CAFE_THEMES[0];
     const themeTipMult = 1 + activeTheme.tipBonus / 100;
+    // Equipped outfit / hat / watch prestige (advertised as "+X% Tip Prestige" in the shop)
+    const prestigeTipMult = 1 + getPrestigeTipBonus(save) / 100;
+    // Head Cashier: "+15% tip efficiency"
+    const cashierTipMult = save.staff.some((s) => s.role === 'cashier') ? 1.15 : 1;
     const tip = Math.round(
-      baseSale * tipRate * (0.5 + patienceRatio * 0.8) * decorFactor * regFactor * repFactor * themeTipMult
+      baseSale *
+        tipRate *
+        (0.5 + patienceRatio * 0.8) *
+        decorFactor *
+        regFactor *
+        repFactor *
+        themeTipMult *
+        prestigeTipMult *
+        cashierTipMult
     );
 
     const repDelta =
       (order.archetype === 'critic' ? 0.12 : 0.04) *
       (patienceRatio > 0.5 ? 1 : 0.4) *
-      (qualityBonus > 1.05 ? 1.3 : 1);
+      (qualityBonus > 1.05 ? 1.3 : 1) *
+      getCleanlinessReputationMult(save.cleanliness);
     const xpGain = Math.round(16 + def.sellPrice * 0.45);
 
     if (order.tableId !== -1) {
@@ -2045,6 +2070,17 @@ export class RestaurantWorldEngine {
       save.timeOfDay = (save.timeOfDay + dt * 0.0045) % 1;
     }
     this.updateAtmosphere(save.timeOfDay);
+
+    // Midnight rollover: a large backwards jump in timeOfDay means the clock wrapped
+    // (either naturally or via the Settings "Cycle Time" button). Only counts during play.
+    if (
+      this.lastTimeOfDay >= 0 &&
+      save.timeOfDay + 0.5 < this.lastTimeOfDay &&
+      !this.titleMode
+    ) {
+      this.callbacks.onDayEnded();
+    }
+    this.lastTimeOfDay = save.timeOfDay;
 
     // Title screen smooth orbiting showcase
     if (this.titleMode) {
@@ -2694,7 +2730,8 @@ export class RestaurantWorldEngine {
 
     const mgrCount = save.staff.filter((s) => s.role === 'manager').length;
     const decorMult = 1 + (save.equipmentLevels.decor - 1) * 0.1;
-    const patienceDecayBase = (mgrCount > 0 ? 1.85 : 2.55) / decorMult;
+    const patienceDecayBase =
+      ((mgrCount > 0 ? 1.85 : 2.55) / decorMult) * getCleanlinessPatienceMult(save.cleanliness);
 
     // Avoidance array layout: [player (+parkedCar?), ...customers, ...staff]
     const customerBaseIdx = !this.inVehicle && this.playerCarParts ? 2 : 1;
@@ -3239,6 +3276,7 @@ export class RestaurantWorldEngine {
                 recipeId: order.recipeId,
                 qualityBonus: 1.0,
               });
+              this.callbacks.onStaffTaskDone(agent.id);
             }
             agent.targetOrderId = null;
             agent.poseMode = 'locomotion';
@@ -3282,6 +3320,7 @@ export class RestaurantWorldEngine {
           const ord = this.orders.find((o) => o.id === agent.targetOrderId);
           if (ord && ord.status === 'waiting') {
             this.completeOrderDelivery(ord, agent.carryingQuality);
+            this.callbacks.onStaffTaskDone(agent.id);
           }
           if (agent.carryingMesh) {
             agent.mesh.carryAnchor.remove(agent.carryingMesh);
@@ -3315,6 +3354,7 @@ export class RestaurantWorldEngine {
               tbl.dirty = false;
               tbl.parts.dirtyMesh.visible = false;
               this.callbacks.onTableCleaned();
+              this.callbacks.onStaffTaskDone(agent.id);
             }
             agent.targetTableId = null;
             agent.poseMode = 'locomotion';
@@ -3334,6 +3374,7 @@ export class RestaurantWorldEngine {
           if (dIdx !== -1) {
             const d = this.readyDishes.splice(dIdx, 1)[0];
             this.completeOrderDelivery(takeOrd, d.qualityBonus);
+            this.callbacks.onStaffTaskDone(agent.id);
           }
         }
       } else if (agent.role === 'manager' || agent.role === 'driver') {

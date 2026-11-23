@@ -269,6 +269,29 @@ export interface CityZone {
   color: string;
 }
 
+/** Running totals for the current in-game business day (reset at midnight). */
+export interface DayStats {
+  revenue: number;
+  tips: number;
+  deliveryIncome: number;
+  franchiseIncome: number;
+  ingredientCost: number;
+  customersServed: number;
+  customersLost: number;
+  dishesCooked: number;
+}
+
+/** Summary produced when an in-game day closes at midnight. */
+export interface DayReport {
+  dayNumber: number;
+  stats: DayStats;
+  payrollDue: number;
+  payrollPaid: number;
+  unpaidWages: boolean;
+  netProfit: number;
+  staffCount: number;
+}
+
 export interface SaveState {
   version: number;
   restaurantCash: number;
@@ -314,6 +337,10 @@ export interface SaveState {
     lastClaimDate: string | null;
     totalDaysClaimed: number;
   };
+  /** Stats for the in-game day currently in progress. */
+  today: DayStats;
+  /** Epoch ms of the last auto-save; used to compute offline franchise earnings. */
+  lastSeenAt: number | null;
 }
 
 export interface ProjectedBubble {

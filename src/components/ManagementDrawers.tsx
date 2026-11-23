@@ -35,9 +35,15 @@ import {
   RECIPE_LIST,
   SPECIALTY_LINES,
   STAFF_CATALOG,
+  STAFF_MAX_LEVEL,
   VEHICLE_CATALOG,
   getEquipmentUpgradeCost,
+  getPrestigeTipBonus,
   getRestaurantTier,
+  getStaffDailySalary,
+  getStaffTrainingCost,
+  getStaffXpForNextLevel,
+  getTotalDailyPayroll,
   getXpForNextLevel,
 } from '../game/data';
 import {
@@ -672,36 +678,57 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
             <>
               {save.staff.length > 0 && (
                 <div className="space-y-2">
-                  <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                    Active Brigade ({save.staff.length})
-                  </h3>
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                      Active Brigade ({save.staff.length})
+                    </h3>
+                    <span className="text-[11px] font-mono-num text-amber-400">
+                      Payroll ${getTotalDailyPayroll(save.staff).toLocaleString()}/day · paid at midnight
+                    </span>
+                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     {save.staff.map((s) => {
-                      const upgCost = Math.round(180 * Math.pow(1.45, s.level - 1));
-                      const canUpg = s.level < 8 && save.restaurantCash >= upgCost;
+                      const upgCost = getStaffTrainingCost(s.level);
+                      const maxed = s.level >= STAFF_MAX_LEVEL;
+                      const canUpg = !maxed && save.restaurantCash >= upgCost;
+                      const xpNeed = getStaffXpForNextLevel(s.level);
+                      const xpPct = maxed ? 100 : Math.min(100, ((s.xp ?? 0) / xpNeed) * 100);
                       return (
                         <div
                           key={s.id}
                           className="rounded-xl bg-slate-900 border border-slate-800 p-3 flex items-center justify-between gap-3"
                         >
-                          <div>
+                          <div className="min-w-0 flex-1">
                             <p className="text-sm font-bold text-white">{s.name}</p>
                             <p className="text-xs text-slate-400 font-mono-num">
-                              Lv {s.level} · Speed {Math.round((1 + (s.level - 1) * 0.14) * 100)}%
+                              Lv {s.level} · Speed {Math.round((1 + (s.level - 1) * 0.14) * 100)}% · $
+                              {getStaffDailySalary(s)}/day
+                            </p>
+                            <div
+                              className="mt-1.5 h-1.5 rounded-full bg-slate-950 overflow-hidden"
+                              title={maxed ? 'Max level' : `${s.xp ?? 0}/${xpNeed} XP to next level`}
+                            >
+                              <div
+                                className={`h-full ${maxed ? 'bg-emerald-500' : 'bg-sky-400'}`}
+                                style={{ width: `${xpPct}%` }}
+                              />
+                            </div>
+                            <p className="text-[10px] text-slate-500 mt-0.5 font-mono-num">
+                              {maxed ? 'Fully trained' : `${s.xp ?? 0}/${xpNeed} XP · levels up by working`}
                             </p>
                           </div>
                           <button
                             disabled={!canUpg}
                             onClick={() => onUpgradeStaff(s.id)}
                             className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap shrink-0 cursor-pointer ${
-                              s.level >= 8
+                              maxed
                                 ? 'bg-emerald-950/60 text-emerald-300'
                                 : canUpg
                                   ? 'bg-sky-500 hover:bg-sky-400 text-slate-950'
                                   : 'bg-slate-800 text-slate-500 cursor-not-allowed'
                             }`}
                           >
-                            {s.level >= 8 ? 'Max Lv' : `Train $${upgCost}`}
+                            {maxed ? 'Max Lv' : `Train $${upgCost}`}
                           </button>
                         </div>
                       );
@@ -937,6 +964,16 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                   );
                 })}
               </div>
+
+              {lifestyleSub === 'clothing' && (
+                <p className="text-xs text-slate-300 rounded-lg bg-slate-900 border border-amber-500/30 px-3 py-2">
+                  Active tip prestige from equipped outfit, hat &amp; watch:{' '}
+                  <strong className="text-amber-300 font-mono-num">
+                    +{getPrestigeTipBonus(save)}%
+                  </strong>{' '}
+                  on every tip.
+                </p>
+              )}
 
               {lifestyleSub === 'clothing' && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
