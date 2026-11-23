@@ -363,6 +363,9 @@ export interface ProjectedBubble {
   stationType?: StationType;
   recipeIds?: RecipeId[];
   pendingCount?: number;
+  /** Machine currently cooking: which dish and how far along (0..1). */
+  cookingRecipeId?: RecipeId;
+  cookProgress?: number;
   /** World-space point the bubble follows; the HUD re-projects it every rendered frame. */
   anchor?: { x: number; y: number; z: number };
   /** Covered machine the player hasn't unlocked yet, and the level that unlocks it. */

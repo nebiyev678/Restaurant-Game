@@ -185,6 +185,8 @@ export interface EngineCallbacks {
   onDeliveryIncome: (amount: number) => void;
   onTableCleaned: () => void;
   onDirtyChanged: (cleanlinessDelta: number) => void;
+  /** A machine finished cooking; `toPass` = it went to the pass counter (player was busy / away). */
+  onDishReady: (recipeId: RecipeId, qualityBonus: number, toPass: boolean) => void;
   /** Fired once when the in-game clock passes midnight during active play. */
   onDayEnded: () => void;
   /** Fired when a hired staff member finishes a task (cooking, serving, cleaning, checkout). */
@@ -298,6 +300,8 @@ export class RestaurantWorldEngine {
   private passPos = { x: 0, z: 0 };
   private binPos = { x: 0, z: 0 };
   private passDishGroup: THREE.Group | null = null;
+  /** Dishes cooking on machines (one per machine). */
+  private cookJobs = new Map<StationType, { recipeId: RecipeId; quality: number; remaining: number; total: number; steam: number }>();
   private passDishKey = '';
   static readonly PASS_SLOTS = 6;
   private staffAgents: SimStaff[] = [];
@@ -400,6 +404,63 @@ export class RestaurantWorldEngine {
       }
     } else {
       this.slowWindows = 0;
+    }
+  }
+
+  /** A dirty table that no other staff member is already walking to / cleaning. */
+  private findUnclaimedDirtyTable(self: { id: string }) {
+    const claimed = new Set(
+      this.staffAgents.filter((a) => a.id !== self.id && a.targetTableId !== null).map((a) => a.targetTableId)
+    );
+    return this.tables.find((t) => t.dirty && !claimed.has(t.id));
+  }
+
+  /** Seconds a dish takes on its machine: a short wait that better equipment shortens. */
+  private cookDuration(recipeId: RecipeId): number {
+    const def = RECIPES[recipeId];
+    const eqLevel = this.saveRef.current.equipmentLevels[def.station] ?? 1;
+    return Math.max(1.5, def.basePrepTime * 0.55 - (eqLevel - 1) * 0.25);
+  }
+
+  public isStationBusy(type: StationType): boolean {
+    return this.cookJobs.has(type);
+  }
+
+  /** Puts a dish on its machine to cook for a few seconds. Returns false if the machine is busy. */
+  public startCookJob(recipeId: RecipeId, qualityBonus: number): boolean {
+    const station = RECIPES[recipeId].station;
+    if (this.cookJobs.has(station)) return false;
+    const total = this.cookDuration(recipeId);
+    this.cookJobs.set(station, { recipeId, quality: qualityBonus, remaining: total, total, steam: 0 });
+    sound.playSizzle();
+    return true;
+  }
+
+  private updateCookJobs(dt: number) {
+    for (const [type, job] of this.cookJobs) {
+      job.remaining -= dt;
+      const st = this.stations.find((s) => s.type === type);
+      job.steam -= dt;
+      if (st && job.steam <= 0) {
+        job.steam = 0.45;
+        this.spawnBurst(st.mx + 0.15, 1.35, st.mz, '#e5e7eb', 3);
+      }
+      if (job.remaining > 0) continue;
+      this.cookJobs.delete(type);
+      // Straight into the chef's hands if they're nearby and empty-handed, otherwise onto the pass
+      const near = st ? Math.hypot(this.playerPos.x - st.x, this.playerPos.z - st.z) < 3 : false;
+      const toHands = near && !this.heldRecipe && !this.inVehicle;
+      if (toHands) {
+        this.setHeldDish(job.recipeId, job.quality);
+      } else {
+        this.readyDishes.push({
+          id: `dish_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          recipeId: job.recipeId,
+          qualityBonus: job.quality,
+        });
+      }
+      if (st) this.spawnBurst(st.mx + 0.15, 1.3, st.mz, '#facc15', 8);
+      this.callbacks.onDishReady(job.recipeId, job.quality, !toHands);
     }
   }
 
@@ -690,7 +751,10 @@ export class RestaurantWorldEngine {
     const tierInfo = getRestaurantTier(save.restaurantLevel);
 
     // A forced sync (new career / reset) must not be mistaken for a midnight rollover.
-    if (force) this.lastTimeOfDay = -1;
+    if (force) {
+      this.lastTimeOfDay = -1;
+      this.cookJobs.clear();
+    }
 
     // 1. Rebuild Restaurant Structure & Tables if tier or cafe theme changed
     const activeThemeId = save.activeCafeThemeId ?? 'classic_bistro';
@@ -2339,6 +2403,7 @@ export class RestaurantWorldEngine {
     // 4. Particles
     this.updateParticles(dt);
 
+    this.updateCookJobs(dt);
     this.syncPassDishes();
 
     // Machines with a customer waiting for one of their dishes glow and pulse
@@ -3597,6 +3662,37 @@ export class RestaurantWorldEngine {
               break;
             }
           }
+          // Nothing to deliver? Clean a dirty table nobody else is handling
+          if (agent.state === 'idle') {
+            const dirtyTbl = this.findUnclaimedDirtyTable(agent);
+            if (dirtyTbl) {
+              agent.targetTableId = dirtyTbl.id;
+              const spot = this.pickTableServiceSpot(agent, dirtyTbl);
+              this.setStaffDestination(agent, spot.x, spot.z);
+              agent.facingYaw = Math.atan2(dirtyTbl.x - spot.x, dirtyTbl.z - spot.z);
+              agent.poseMode = 'cleaning';
+              agent.state = 'working';
+              agent.timer = 1.7 / spdMult;
+            }
+          }
+        } else if (agent.state === 'working') {
+          // Waiter wiping a table
+          agent.poseMode = 'cleaning';
+          agent.timer -= dt;
+          if (agent.timer <= 0) {
+            const tbl = this.tables.find((t) => t.id === agent.targetTableId);
+            if (tbl && tbl.dirty) {
+              tbl.dirty = false;
+              tbl.parts.dirtyMesh.visible = false;
+              this.spawnBurst(tbl.x, 1.0, tbl.z, '#34d399', 6);
+              this.callbacks.onTableCleaned();
+              this.callbacks.onStaffTaskDone(agent.id);
+            }
+            agent.targetTableId = null;
+            agent.poseMode = 'locomotion';
+            agent.facingYaw = null;
+            agent.state = 'idle';
+          }
         } else if (agent.state === 'carrying') {
           const ord = this.orders.find((o) => o.id === agent.targetOrderId);
           if (ord && ord.status === 'waiting') {
@@ -3616,7 +3712,7 @@ export class RestaurantWorldEngine {
       } else if (agent.role === 'cleaner') {
         if (agent.state === 'idle') {
           agent.poseMode = 'locomotion';
-          const dirtyTbl = this.tables.find((t) => t.dirty);
+          const dirtyTbl = this.findUnclaimedDirtyTable(agent);
           if (dirtyTbl) {
             agent.targetTableId = dirtyTbl.id;
             const spot = this.pickTableServiceSpot(agent, dirtyTbl);
@@ -3785,6 +3881,11 @@ export class RestaurantWorldEngine {
           visible: true,
           kind: 'station',
           anchor: { x: st.mx, y: 2.15, z: st.mz },
+          cookingRecipeId: this.cookJobs.get(st.type)?.recipeId,
+          cookProgress: (() => {
+            const j = this.cookJobs.get(st.type);
+            return j ? THREE.MathUtils.clamp(1 - j.remaining / j.total, 0, 1) : undefined;
+          })(),
           label: STATION_INFO[st.type].short,
           stationType: st.type,
           recipeIds,
