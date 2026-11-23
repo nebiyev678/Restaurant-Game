@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, Moon, TrendingDown, TrendingUp, X } from 'lucide-react';
+import { AlertTriangle, Moon, Star, TrendingDown, TrendingUp, X } from 'lucide-react';
 import { DayReport } from '../game/types';
 
 interface DayReportCardProps {
@@ -76,6 +76,28 @@ export const DayReportCard: React.FC<DayReportCardProps> = ({
         >
           <X className="w-3.5 h-3.5" />
         </button>
+      </div>
+
+      {/* Daily star rating */}
+      <div className={`flex items-center justify-between gap-2 px-3.5 ${compact && !expanded ? 'pt-2' : 'pt-3'}`}>
+        <div className="flex items-center gap-0.5" aria-label={`${report.stars} of 3 stars`}>
+          {[0, 1, 2].map((i) => (
+            <Star
+              key={i}
+              className={`${compact && !expanded ? 'w-5 h-5' : 'w-7 h-7'} ${
+                i < report.stars ? 'fill-amber-400 text-amber-300' : 'text-slate-600'
+              }`}
+            />
+          ))}
+        </div>
+        <div className="text-right">
+          <p className="text-[10px] text-slate-400">
+            {s.customersServed}/{report.starTarget} served for ★★
+          </p>
+          {report.starReward > 0 && (
+            <p className="font-mono-num text-xs font-bold text-amber-300">+${report.starReward.toLocaleString()} bonus</p>
+          )}
+        </div>
       </div>
 
       {compact && !expanded ? (

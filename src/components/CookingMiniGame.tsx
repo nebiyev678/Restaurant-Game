@@ -37,10 +37,11 @@ export const CookingMiniGame: React.FC<CookingMiniGameProps> = ({
   const selectableIds =
     stationRecipes.length > 0 ? stationRecipes : isEmptySpecialty ? [] : unlockedRecipes;
 
-  const initialRecipe: RecipeId =
-    suggestedOrder && selectableIds.includes(suggestedOrder.recipeId)
-      ? suggestedOrder.recipeId
-      : selectableIds[0] ?? 'burger';
+  // Preselect the order's next dish that this machine can make (combos may need several machines)
+  const suggestedDish = suggestedOrder
+    ? (suggestedOrder.remaining ?? [suggestedOrder.recipeId]).find((r) => selectableIds.includes(r))
+    : undefined;
+  const initialRecipe: RecipeId = suggestedDish ?? selectableIds[0] ?? 'burger';
 
   const [selectedRecipe, setSelectedRecipe] = useState<RecipeId>(initialRecipe);
   // One-tap cooking: the timing bar runs as soon as the window opens (1 = timing, 2 = plating flash)
@@ -218,9 +219,9 @@ export const CookingMiniGame: React.FC<CookingMiniGameProps> = ({
             <div className="flex items-center gap-1.5 overflow-x-auto pb-2 mb-3">
               {selectableIds.map((id) => {
                 const r = RECIPES[id];
-                const waitingCount = pendingOrders.filter(
-                  (o) => o.status === 'waiting' && o.recipeId === id
-                ).length;
+                const waitingCount = pendingOrders
+                  .filter((o) => o.status === 'waiting')
+                  .reduce((n, o) => n + (o.remaining ?? [o.recipeId]).filter((r) => r === id).length, 0);
                 const active = selectedRecipe === id;
                 return (
                   <button

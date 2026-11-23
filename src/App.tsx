@@ -56,8 +56,17 @@ import {
   RECIPES,
   SPECIALTY_LINES,
   STAFF_CATALOG,
+  MASTERY_TIERS,
   STAFF_MAX_LEVEL,
   STATION_INFO,
+  applyChallengeProgress,
+  computeDayStars,
+  countClaimableChallenges,
+  generateDailyChallenges,
+  getChallengeBonusReward,
+  getDailyStarTarget,
+  getMasteryTier,
+  getStarReward,
   STAFF_XP_PER_TASK,
   VEHICLE_CATALOG,
   computeOfflineEarnings,
@@ -149,6 +158,9 @@ function loadSavedState(): { state: SaveState; hasExisting: boolean } {
           : base.graphicsQuality,
         hapticsEnabled:
           typeof parsed.hapticsEnabled === 'boolean' ? parsed.hapticsEnabled : base.hapticsEnabled,
+        recipeMastery: { ...(parsed.recipeMastery ?? {}) },
+        dailyChallenges: parsed.dailyChallenges?.items ? parsed.dailyChallenges : base.dailyChallenges,
+        totalStars: typeof parsed.totalStars === 'number' ? parsed.totalStars : 0,
         staff: Array.isArray(parsed.staff)
           ? parsed.staff.map((m) => ({ ...m, xp: typeof m.xp === 'number' ? m.xp : 0 }))
           : base.staff,
@@ -195,6 +207,7 @@ export default function App() {
     nearbyPrompt: null,
     bubbles: [],
     playerPos: { x: -4, z: 2 },
+    streak: { count: 0, mult: 1, timeLeft: 0 },
   });
 
   const [popups, setPopups] = useState<FloatingPopup[]>([]);
@@ -302,10 +315,28 @@ export default function App() {
 
     const engine = new RestaurantWorldEngine(mount, saveRef, {
       onHudUpdate: (snapshot) => setHud(snapshot),
-      onOrderServed: (recipeId, revenue, tip, repDelta, xpGain) => {
+      onOrderServed: (recipeId, revenue, tip, repDelta, xpGain, _pos, info) => {
         const total = revenue + tip;
         haptic(HAPTIC.success);
-        pushPopup(`+$${revenue}${tip > 0 ? ` (+$${tip} tip)` : ''}`, 'emerald');
+        pushPopup(
+          `${info.comboSize > 1 ? `Combo ×${info.comboSize}! ` : ''}+$${revenue}${tip > 0 ? ` (+$${tip} tip)` : ''}`,
+          'emerald'
+        );
+
+        // Recipe mastery: announce new medals (checked against the current save)
+        const before = saveRef.current.recipeMastery ?? {};
+        const counts = new Map<RecipeId, number>();
+        info.items.forEach((r) => counts.set(r, (counts.get(r) ?? 0) + 1));
+        counts.forEach((n, r) => {
+          const oldTier = getMasteryTier(before[r] ?? 0);
+          const newTier = getMasteryTier((before[r] ?? 0) + n);
+          if (newTier > oldTier) {
+            const t = MASTERY_TIERS[newTier];
+            haptic(HAPTIC.levelUp);
+            showToast(`${RECIPES[r].name}: ${t.name} Mastery!`, `+${Math.round(t.bonus * 100)}% price on every ${RECIPES[r].name}`);
+          }
+        });
+
         commitSave((prev) => {
           let nextXp = prev.xp + xpGain;
           let nextLevel = prev.restaurantLevel;
@@ -341,8 +372,31 @@ export default function App() {
               tips: prev.today.tips + tip,
               customersServed: prev.today.customersServed + 1,
             },
+            recipeMastery: (() => {
+              const m = { ...(prev.recipeMastery ?? {}) };
+              info.items.forEach((r) => (m[r] = (m[r] ?? 0) + 1));
+              return m;
+            })(),
+            dailyChallenges: [
+              { kind: 'serve_orders', amount: 1 } as const,
+              { kind: 'serve_combos', amount: info.comboSize > 1 ? 1 : 0 } as const,
+              { kind: 'earn_cash', amount: total } as const,
+              { kind: 'serve_recipe', recipeIds: info.items } as const,
+              { kind: 'reach_streak', value: info.streak } as const,
+            ].reduce((st, ev) => applyChallengeProgress(st, ev), prev.dailyChallenges),
           };
         });
+      },
+      onItemServed: (recipeId, remaining) => {
+        haptic(HAPTIC.tap);
+        pushPopup(`${RECIPES[recipeId].name} ✓ · ${remaining} more`, 'sky');
+      },
+      onStreakChanged: (count, mult) => {
+        // Celebrate each new multiplier tier
+        if (count === 3 || count === 6 || count === 10) {
+          haptic(HAPTIC.perfect);
+          showToast(`🔥 ${count}× Streak!`, `Tips ×${mult} while you keep serving`);
+        }
       },
       onOrderFailed: (repDelta) => {
         pushPopup('Customer Left!', 'rose');
@@ -389,6 +443,7 @@ export default function App() {
         commitSave((prev) => ({
           ...prev,
           cleanliness: Math.min(100, prev.cleanliness + 6),
+          dailyChallenges: applyChallengeProgress(prev.dailyChallenges, { kind: 'clean_tables', amount: 1 }),
         }));
       },
       onDirtyChanged: (delta) => {
@@ -471,6 +526,9 @@ export default function App() {
     const payrollDue = getTotalDailyPayroll(s.staff);
     const payrollPaid = Math.min(payrollDue, s.restaurantCash);
     const t = s.today;
+    const starTarget = getDailyStarTarget(s.restaurantLevel);
+    const stars = computeDayStars(t.customersServed, t.customersLost, s.cleanliness, starTarget);
+    const starReward = getStarReward(stars, s.restaurantLevel);
     const report: DayReport = {
       dayNumber: s.dayNumber,
       stats: { ...t },
@@ -480,6 +538,9 @@ export default function App() {
       netProfit:
         t.revenue + t.tips + t.deliveryIncome + t.franchiseIncome - t.ingredientCost - payrollPaid,
       staffCount: s.staff.length,
+      stars,
+      starTarget,
+      starReward,
     };
 
     commitSave((prev) => {
@@ -487,7 +548,9 @@ export default function App() {
       const paid = Math.min(due, prev.restaurantCash);
       return {
         ...prev,
-        restaurantCash: prev.restaurantCash - paid,
+        restaurantCash: prev.restaurantCash - paid + starReward,
+        totalEarned: prev.totalEarned + starReward,
+        totalStars: (prev.totalStars ?? 0) + stars,
         // Missing payroll upsets the team, which customers notice
         reputation: paid < due ? Math.max(1.0, prev.reputation - 0.15) : prev.reputation,
         dayNumber: prev.dayNumber + 1,
@@ -564,6 +627,59 @@ export default function App() {
     setOfflineReward(null);
     pushPopup(`+$${amount.toLocaleString()} Offline`, 'emerald');
   }, [offlineReward, commitSave, pushPopup]);
+
+  // Daily challenges: a fresh set of three every real day
+  useEffect(() => {
+    const check = () => {
+      const today = getLocalDateKey();
+      if (saveRef.current.dailyChallenges?.date === today) return;
+      commitSave((prev) => ({
+        ...prev,
+        dailyChallenges: generateDailyChallenges(today, prev.restaurantLevel, prev.unlockedRecipes),
+      }));
+    };
+    check();
+    const t = window.setInterval(check, 60000);
+    return () => window.clearInterval(t);
+  }, [commitSave]);
+
+  const handleClaimChallenge = useCallback(
+    (id: string) => {
+      const c = saveRef.current.dailyChallenges.items.find((x) => x.id === id);
+      if (!c || c.claimed || c.progress < c.target) return;
+      sound.playCash();
+      haptic(HAPTIC.success);
+      commitSave((prev) => ({
+        ...prev,
+        restaurantCash: prev.restaurantCash + c.reward,
+        totalEarned: prev.totalEarned + c.reward,
+        dailyChallenges: {
+          ...prev.dailyChallenges,
+          items: prev.dailyChallenges.items.map((x) => (x.id === id ? { ...x, claimed: true } : x)),
+        },
+      }));
+      pushPopup(`+$${c.reward.toLocaleString()} Challenge`, 'amber');
+    },
+    [commitSave, pushPopup]
+  );
+
+  const handleClaimChallengeBonus = useCallback(() => {
+    const st = saveRef.current.dailyChallenges;
+    if (st.bonusClaimed || st.items.length === 0 || !st.items.every((c) => c.claimed)) return;
+    const reward = getChallengeBonusReward(saveRef.current.restaurantLevel);
+    sound.playLevelUp();
+    haptic(HAPTIC.levelUp);
+    commitSave((prev) => ({
+      ...prev,
+      restaurantCash: prev.restaurantCash + reward,
+      totalEarned: prev.totalEarned + reward,
+      dailyChallenges: { ...prev.dailyChallenges, bonusClaimed: true },
+    }));
+    showToast('Daily Chest Opened!', `+$${reward.toLocaleString()} for finishing all 3 challenges`);
+  }, [commitSave, showToast]);
+
+  const claimableChallenges = countClaimableChallenges(save.dailyChallenges);
+  const starTarget = getDailyStarTarget(save.restaurantLevel);
 
   const dailyStatus = getDailyLoginStatus(save.dailyLogin);
   // Keep dailyStatus sensitive to calendar day changes while open
@@ -770,6 +886,10 @@ export default function App() {
     haptic(qualityBonus > 1 ? HAPTIC.perfect : HAPTIC.action);
     commitSave((prev) => ({
       ...prev,
+      dailyChallenges:
+        qualityBonus > 1
+          ? applyChallengeProgress(prev.dailyChallenges, { kind: 'perfect_cooks', amount: 1 })
+          : prev.dailyChallenges,
       restaurantCash: Math.max(0, prev.restaurantCash - ingredientCost),
       tutorialStep: prev.tutorialStep === 0 ? 1 : prev.tutorialStep,
       stats: {
@@ -1201,6 +1321,19 @@ export default function App() {
                       )}
                     </span>
                   )}
+                  {b.recipeIds && b.recipeIds.length > 1 && (
+                    <span className="absolute -bottom-1 -right-2 flex">
+                      {b.recipeIds.slice(1, 3).map((r, k) => (
+                        <PreviewThumb
+                          key={`${r}_${k}`}
+                          kind="recipe"
+                          id={r}
+                          alt={RECIPES[r].name}
+                          className="w-4 h-4 rounded-full ring-1 ring-slate-900 -ml-1"
+                        />
+                      ))}
+                    </span>
+                  )}
                   {(b.archetype === 'vip' || b.archetype === 'critic') && (
                     <span
                       className={`absolute -top-1 -right-1 w-4 h-4 rounded-full border border-slate-950 flex items-center justify-center ${
@@ -1234,7 +1367,10 @@ export default function App() {
               ) : (
                 <div className="min-w-[82px]">
                   <div className="flex items-center justify-between gap-1.5 text-[11px] font-bold text-white whitespace-nowrap">
-                    <span>{b.label}</span>
+                    <span>
+                      {b.label}
+                      {b.recipeIds && b.recipeIds.length > 1 ? ` +${b.recipeIds.length - 1}` : ''}
+                    </span>
                     {b.archetype === 'vip' && <span className="text-amber-400">VIP</span>}
                     {b.archetype === 'critic' && <span className="text-rose-400">Critic</span>}
                   </div>
@@ -1328,6 +1464,13 @@ export default function App() {
                   >
                     <span className="text-[9px] text-indigo-300">D{save.dayNumber}</span>
                     {formatClock(saveRef.current.timeOfDay)}
+                    <span
+                      className="flex items-center gap-0.5 ml-0.5 pl-1.5 border-l border-slate-700 text-amber-300"
+                      aria-label={`Today's goal: ${save.today.customersServed} of ${starTarget} orders for 2 stars`}
+                    >
+                      <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
+                      {save.today.customersServed}/{starTarget}
+                    </span>
                   </span>
                   <button
                     onClick={() => {
@@ -1357,6 +1500,11 @@ export default function App() {
                         <span className="absolute top-0.5 left-0.5 px-1 rounded bg-slate-950/80 text-[8px] font-bold text-slate-200 leading-tight">
                           {ord.tableId === -1 ? 'TO GO' : `T${ord.tableId}`}
                         </span>
+                        {ord.items.length > 1 && (
+                          <span className="absolute top-0.5 right-0.5 px-1 rounded bg-amber-500 text-[8px] font-extrabold text-slate-950 leading-tight">
+                            {ord.items.length - ord.remaining.length}/{ord.items.length}
+                          </span>
+                        )}
                         <span className="block mt-0.5 h-1 rounded-full bg-slate-800 overflow-hidden">
                           <span className="block h-full" style={{ width: `${Math.max(6, pct)}%`, background: patienceColor(pct) }} />
                         </span>
@@ -1505,6 +1653,13 @@ export default function App() {
                   <span className="sm:hidden">D</span>
                   {save.dayNumber} · {formatClock(saveRef.current.timeOfDay)}
                 </span>
+                <span
+                  className="flex items-center gap-1 pl-1.5 border-l border-slate-700 font-mono-num text-amber-300"
+                  title="Orders served today / goal for 2 stars"
+                >
+                  <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                  {save.today.customersServed}/{starTarget}
+                </span>
               </div>
               <div className="hidden md:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-950/92 border border-slate-700/80 text-xs font-semibold text-slate-200">
                 <MapPin className="w-3.5 h-3.5 text-amber-400" />
@@ -1604,6 +1759,11 @@ export default function App() {
                     <div className="min-w-0">
                       <p className="text-xs font-bold text-white truncate">
                         {RECIPES[ord.recipeId].name}
+                        {ord.items.length > 1 && (
+                          <span className="ml-1 text-amber-300">
+                            +{ord.remaining.length - 1} · combo {ord.items.length - ord.remaining.length}/{ord.items.length}
+                          </span>
+                        )}
                       </p>
                       <p className="text-[10px] text-slate-400 truncate">
                         {ord.tableId === -1 ? 'Takeaway' : `Table ${ord.tableId}`} · {ord.customerName}
@@ -1619,6 +1779,26 @@ export default function App() {
                   </button>
                 );
               })}
+            </div>
+          )}
+
+          {/* Serving streak meter: tips multiply while you keep serving */}
+          {hud.streak.count >= 2 && drawerTab === 'none' && (
+            <div
+              className={`fixed z-20 pointer-events-none flex items-center gap-1.5 rounded-full border shadow-lg ${
+                compact ? 'right-2 px-2 py-1' : 'right-4 px-3 py-1.5'
+              } ${hud.streak.mult > 1 ? 'bg-orange-600/90 border-orange-300' : 'bg-slate-950/85 border-slate-600'}`}
+              style={{ top: compact ? 'calc(max(0.5rem, env(safe-area-inset-top)) + 2.9rem)' : '4.5rem' }}
+              aria-label={`Serving streak ${hud.streak.count}, tips times ${hud.streak.mult}`}
+            >
+              <Flame className={`${compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} text-yellow-200 fill-yellow-300`} />
+              <span className={`font-mono-num font-extrabold text-white ${compact ? 'text-[11px]' : 'text-xs'}`}>
+                {hud.streak.count}
+                {hud.streak.mult > 1 && <span className="text-yellow-200"> · ×{hud.streak.mult}</span>}
+              </span>
+              <span className="block w-10 h-1 rounded-full bg-black/30 overflow-hidden">
+                <span className="block h-full bg-yellow-200" style={{ width: `${Math.round(hud.streak.timeLeft * 100)}%` }} />
+              </span>
             </div>
           )}
 
@@ -1884,7 +2064,14 @@ export default function App() {
                           : 'flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs'
                       } ${active ? 'bg-amber-500 text-slate-950' : 'text-slate-200 hover:bg-slate-800'}`}
                     >
-                      <Icon className={`${compact ? 'w-[18px] h-[18px]' : 'w-4 h-4'} shrink-0`} />
+                      <span className="relative">
+                        <Icon className={`${compact ? 'w-[18px] h-[18px]' : 'w-4 h-4'} shrink-0`} />
+                        {item.id === 'missions' && claimableChallenges > 0 && (
+                          <span className="absolute -top-1.5 -right-2 min-w-4 h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-extrabold flex items-center justify-center">
+                            {claimableChallenges}
+                          </span>
+                        )}
+                      </span>
                       <span>{compact && item.id === 'restaurant' ? 'Cafe' : compact && item.id === 'lifestyle' ? 'Shop' : compact && item.id === 'settings' ? 'Setup' : item.label}</span>
                     </button>
                   );
@@ -1955,6 +2142,8 @@ export default function App() {
         }}
         onSaveNow={handleSaveNow}
         onSetGraphicsQuality={(q) => commitSave((p) => ({ ...p, graphicsQuality: q }))}
+        onClaimChallenge={handleClaimChallenge}
+        onClaimChallengeBonus={handleClaimChallengeBonus}
         onToggleHaptics={() => {
           const next = !(save.hapticsEnabled ?? true);
           setHapticsEnabled(next);

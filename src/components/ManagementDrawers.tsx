@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Award,
+  Gift,
   Building2,
   Car,
   Check,
@@ -38,7 +39,11 @@ import {
   RECIPE_LIST,
   SPECIALTY_LINES,
   STAFF_CATALOG,
+  MASTERY_TIERS,
   STAFF_MAX_LEVEL,
+  describeChallenge,
+  getChallengeBonusReward,
+  getMasteryTier,
   VEHICLE_CATALOG,
   getEquipmentUpgradeCost,
   getPrestigeTipBonus,
@@ -87,6 +92,8 @@ interface ManagementDrawersProps {
   onToggleMusicMute: () => void;
   onSaveNow: () => void;
   onSetGraphicsQuality: (q: SaveState['graphicsQuality']) => void;
+  onClaimChallenge: (id: string) => void;
+  onClaimChallengeBonus: () => void;
   onToggleHaptics: () => void;
   onResetSave: () => void;
   onAdvanceTimeOfDay: () => void;
@@ -120,6 +127,8 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
   onToggleMusicMute,
   onSaveNow,
   onSetGraphicsQuality,
+  onClaimChallenge,
+  onClaimChallengeBonus,
   onToggleHaptics,
   onResetSave,
   onAdvanceTimeOfDay,
@@ -671,6 +680,35 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                         <p className="text-[11px] text-slate-500">
                           Station: {r.station === 'specialty' ? 'SPECIALTY STATION' : r.station.toUpperCase()} · Unlocks at Level {r.requiredLevel}
                         </p>
+                        {unlocked &&
+                          (() => {
+                            const served = save.recipeMastery?.[r.id] ?? 0;
+                            const tier = getMasteryTier(served);
+                            const next = MASTERY_TIERS[tier + 1];
+                            const prevAt = tier >= 0 ? MASTERY_TIERS[tier].at : 0;
+                            return (
+                              <div className="mt-2">
+                                <div className="flex items-center justify-between text-[11px] mb-1">
+                                  <span className="flex items-center gap-1 font-bold" style={{ color: tier >= 0 ? MASTERY_TIERS[tier].color : '#94a3b8' }}>
+                                    <Award className="w-3.5 h-3.5" />
+                                    {tier >= 0 ? `${MASTERY_TIERS[tier].name} · +${Math.round(MASTERY_TIERS[tier].bonus * 100)}% price` : 'No medal yet'}
+                                  </span>
+                                  <span className="font-mono-num text-slate-400">
+                                    {next ? `${served}/${next.at} → ${next.name}` : `${served} served · max`}
+                                  </span>
+                                </div>
+                                <div className="h-1.5 rounded-full bg-slate-950 overflow-hidden">
+                                  <div
+                                    className="h-full"
+                                    style={{
+                                      width: `${next ? Math.min(100, ((served - prevAt) / (next.at - prevAt)) * 100) : 100}%`,
+                                      background: next ? next.color : MASTERY_TIERS[2].color,
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })()}
                       </div>
 
                       {unlocked ? (
@@ -1268,6 +1306,78 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
           {/* MISSIONS & ACHIEVEMENTS */}
           {activeTab === 'missions' && (
             <div className="space-y-5">
+              {/* Daily challenges (refresh every real day) */}
+              <div className="space-y-2.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-amber-400">Today's Challenges</h3>
+                  <span className="text-[11px] text-slate-500">New set every day</span>
+                </div>
+                {save.dailyChallenges.items.map((c) => {
+                  const done = c.progress >= c.target;
+                  return (
+                    <div
+                      key={c.id}
+                      className={`rounded-xl border p-3 flex items-center justify-between gap-3 ${
+                        c.claimed
+                          ? 'bg-slate-900/60 border-slate-800 opacity-70'
+                          : done
+                            ? 'bg-emerald-950/40 border-emerald-600/60'
+                            : 'bg-slate-900 border-slate-800'
+                      }`}
+                    >
+                      {c.recipeId && (
+                        <PreviewThumb kind="recipe" id={c.recipeId} alt="" className="w-11 h-11 shrink-0" />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <span className="font-semibold text-sm text-white">{describeChallenge(c)}</span>
+                          <span className="font-mono-num text-xs text-slate-300 shrink-0">
+                            {c.progress.toLocaleString()} / {c.target.toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-slate-950 overflow-hidden">
+                          <div
+                            className={`h-full ${done ? 'bg-emerald-400' : 'bg-amber-400'}`}
+                            style={{ width: `${(c.progress / c.target) * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                      <button
+                        disabled={!done || c.claimed}
+                        onClick={() => onClaimChallenge(c.id)}
+                        className={`shrink-0 min-w-[84px] min-h-[40px] px-3 rounded-lg text-xs font-bold cursor-pointer ${
+                          c.claimed
+                            ? 'bg-slate-800 text-slate-500 cursor-default'
+                            : done
+                              ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950'
+                              : 'bg-slate-800 text-amber-300 cursor-default'
+                        }`}
+                      >
+                        {c.claimed ? 'Claimed' : `$${c.reward.toLocaleString()}`}
+                      </button>
+                    </div>
+                  );
+                })}
+                {save.dailyChallenges.items.length > 0 && (
+                  <button
+                    disabled={!save.dailyChallenges.items.every((c) => c.claimed) || save.dailyChallenges.bonusClaimed}
+                    onClick={onClaimChallengeBonus}
+                    className={`w-full min-h-[48px] rounded-xl border text-sm font-display font-extrabold flex items-center justify-center gap-2 cursor-pointer ${
+                      save.dailyChallenges.bonusClaimed
+                        ? 'bg-slate-900 border-slate-800 text-slate-500 cursor-default'
+                        : save.dailyChallenges.items.every((c) => c.claimed)
+                          ? 'bg-amber-500 hover:bg-amber-400 border-amber-300 text-slate-950 animate-pulse'
+                          : 'bg-slate-900 border-dashed border-slate-700 text-slate-400 cursor-default'
+                    }`}
+                  >
+                    <Gift className="w-4 h-4" />
+                    {save.dailyChallenges.bonusClaimed
+                      ? 'Daily chest opened · come back tomorrow'
+                      : `Finish all 3 → Daily Chest $${getChallengeBonusReward(save.restaurantLevel).toLocaleString()}`}
+                  </button>
+                )}
+              </div>
+
               <div className="space-y-2.5">
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
                   Career Missions

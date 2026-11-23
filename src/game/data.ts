@@ -3,6 +3,9 @@ import {
   CafeThemeDef,
   CityZone,
   ClothingItem,
+  DailyChallenge,
+  DailyChallengeKind,
+  DailyChallengeState,
   DayStats,
   EquipmentDef,
   EquipmentId,
@@ -1153,6 +1156,179 @@ export function getEarlySpawnDelay(restaurantLevel: number): number {
 }
 
 // ---------------------------------------------------------------------------
+// Combos, streaks, daily stars, daily challenges & recipe mastery
+// ---------------------------------------------------------------------------
+
+/** How many dishes a new order contains (combos appear from level 3). */
+export function rollComboSize(restaurantLevel: number, unlockedCount: number, rnd = Math.random): number {
+  if (unlockedCount < 2 || restaurantLevel < 3) return 1;
+  const r = rnd();
+  if (restaurantLevel >= 6 && unlockedCount >= 3 && r < 0.15) return 3;
+  if (r < 0.4) return 2;
+  return 1;
+}
+
+/** Revenue bonus for bigger combos: +15% per extra dish. */
+export function getComboBonusMult(items: number): number {
+  return 1 + Math.max(0, items - 1) * 0.15;
+}
+
+/** Seconds a streak survives without completing another order. */
+export const STREAK_WINDOW = 35;
+
+/** Tip multiplier for the current serving streak. */
+export function getStreakMult(count: number): number {
+  if (count >= 10) return 2;
+  if (count >= 6) return 1.5;
+  if (count >= 3) return 1.2;
+  return 1;
+}
+
+/** Orders to serve in one in-game day for 2 stars (3 stars needs 30% more). */
+export function getDailyStarTarget(restaurantLevel: number): number {
+  return Math.round(6 + restaurantLevel * 1.2);
+}
+
+/** 0–3 stars from served orders, walk-outs and cleanliness at closing time. */
+export function computeDayStars(served: number, lost: number, cleanliness: number, target: number): number {
+  const total = served + lost;
+  const lostRate = total > 0 ? lost / total : 0;
+  if (served >= Math.ceil(target * 1.3) && lostRate <= 0.1 && cleanliness >= 70) return 3;
+  if (served >= target && lostRate <= 0.2) return 2;
+  if (served >= Math.ceil(target * 0.5)) return 1;
+  return 0;
+}
+
+export function getStarReward(stars: number, restaurantLevel: number): number {
+  return stars * (50 + restaurantLevel * 20);
+}
+
+export const MASTERY_TIERS = [
+  { name: 'Bronze', at: 10, bonus: 0.05, color: '#d97706' },
+  { name: 'Silver', at: 30, bonus: 0.12, color: '#cbd5e1' },
+  { name: 'Gold', at: 75, bonus: 0.2, color: '#facc15' },
+] as const;
+
+/** -1 = no medal yet, 0 = Bronze, 1 = Silver, 2 = Gold. */
+export function getMasteryTier(count: number): number {
+  let tier = -1;
+  MASTERY_TIERS.forEach((t, i) => {
+    if (count >= t.at) tier = i;
+  });
+  return tier;
+}
+
+export function getMasteryPriceMult(count: number): number {
+  const tier = getMasteryTier(count);
+  return 1 + (tier >= 0 ? MASTERY_TIERS[tier].bonus : 0);
+}
+
+const CHALLENGE_TEMPLATES: { kind: DailyChallengeKind; base: number; perLevel: number }[] = [
+  { kind: 'serve_orders', base: 8, perLevel: 1.2 },
+  { kind: 'serve_combos', base: 2, perLevel: 0.35 },
+  { kind: 'perfect_cooks', base: 5, perLevel: 0.6 },
+  { kind: 'clean_tables', base: 4, perLevel: 0.5 },
+  { kind: 'earn_cash', base: 300, perLevel: 120 },
+  { kind: 'reach_streak', base: 3, perLevel: 0.25 },
+  { kind: 'serve_recipe', base: 4, perLevel: 0.4 },
+];
+
+/**
+ * Three challenges for a real-world date, the same for every reload that day.
+ * Targets and rewards grow with restaurant level; combos only appear once they exist (Lv3+).
+ */
+export function generateDailyChallenges(
+  dateKey: string,
+  restaurantLevel: number,
+  unlockedRecipes: RecipeId[]
+): DailyChallengeState {
+  // FNV-1a hash of the date + avalanche mix, so neighbouring days get unrelated challenge sets
+  let seed = 2166136261;
+  for (const ch of dateKey) seed = Math.imul(seed ^ ch.charCodeAt(0), 16777619) >>> 0;
+  seed ^= seed >>> 16;
+  seed = Math.imul(seed, 0x85ebca6b) >>> 0;
+  seed ^= seed >>> 13;
+  const rnd = () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+  const pool = CHALLENGE_TEMPLATES.filter((t) => t.kind !== 'serve_combos' || restaurantLevel >= 3);
+  const picked: typeof pool = [];
+  while (picked.length < 3 && pool.length > 0) {
+    picked.push(pool.splice(Math.floor(rnd() * pool.length), 1)[0]);
+  }
+  const items: DailyChallenge[] = picked.map((t, i) => {
+    const target = Math.max(1, Math.round(t.base + t.perLevel * (restaurantLevel - 1)));
+    const c: DailyChallenge = {
+      id: `${dateKey}_${t.kind}_${i}`,
+      kind: t.kind,
+      target: t.kind === 'earn_cash' ? Math.round(target / 50) * 50 : target,
+      progress: 0,
+      reward: Math.round((120 + restaurantLevel * 45) * (t.kind === 'reach_streak' || t.kind === 'serve_combos' ? 1.3 : 1)),
+      claimed: false,
+    };
+    if (t.kind === 'serve_recipe') {
+      c.recipeId = unlockedRecipes[Math.floor(rnd() * unlockedRecipes.length)] ?? 'burger';
+    }
+    return c;
+  });
+  return { date: dateKey, items, bonusClaimed: false };
+}
+
+export type ChallengeEvent =
+  | { kind: 'serve_orders' | 'serve_combos' | 'perfect_cooks' | 'clean_tables' | 'earn_cash'; amount: number }
+  | { kind: 'reach_streak'; value: number }
+  | { kind: 'serve_recipe'; recipeIds: RecipeId[] };
+
+/** Applies one gameplay event to today's challenges (pure; returns the same object if nothing changed). */
+export function applyChallengeProgress(state: DailyChallengeState, ev: ChallengeEvent): DailyChallengeState {
+  let changed = false;
+  const items = state.items.map((c) => {
+    if (c.kind !== ev.kind || c.progress >= c.target) return c;
+    let progress = c.progress;
+    if (ev.kind === 'reach_streak') progress = Math.max(progress, ev.value);
+    else if (ev.kind === 'serve_recipe') progress += ev.recipeIds.filter((r) => r === c.recipeId).length;
+    else progress += ev.amount;
+    progress = Math.min(c.target, progress);
+    if (progress === c.progress) return c;
+    changed = true;
+    return { ...c, progress };
+  });
+  return changed ? { ...state, items } : state;
+}
+
+/** Challenges finished but not claimed yet (+1 for the all-done bonus when available). */
+export function countClaimableChallenges(state: DailyChallengeState): number {
+  const ready = state.items.filter((c) => c.progress >= c.target && !c.claimed).length;
+  const allClaimed = state.items.length > 0 && state.items.every((c) => c.claimed);
+  return ready + (allClaimed && !state.bonusClaimed ? 1 : 0);
+}
+
+/** Extra reward for finishing all three challenges in a day. */
+export function getChallengeBonusReward(restaurantLevel: number): number {
+  return 250 + restaurantLevel * 90;
+}
+
+export function describeChallenge(c: DailyChallenge): string {
+  switch (c.kind) {
+    case 'serve_orders':
+      return `Serve ${c.target} orders`;
+    case 'serve_combos':
+      return `Serve ${c.target} combo orders`;
+    case 'perfect_cooks':
+      return `Cook ${c.target} perfect dishes`;
+    case 'clean_tables':
+      return `Clean ${c.target} tables`;
+    case 'earn_cash':
+      return `Earn $${c.target.toLocaleString()} from customers`;
+    case 'reach_streak':
+      return `Reach a ${c.target}× serving streak`;
+    case 'serve_recipe':
+      return `Serve ${c.target} × ${c.recipeId ? RECIPES[c.recipeId].name : 'dish'}`;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Day cycle & economy helpers
 // ---------------------------------------------------------------------------
 
@@ -1405,5 +1581,8 @@ export function createInitialSaveState(): SaveState {
     lastSeenAt: null,
     graphicsQuality: 'auto',
     hapticsEnabled: true,
+    recipeMastery: {},
+    dailyChallenges: { date: null, items: [], bonusClaimed: false },
+    totalStars: 0,
   };
 }
