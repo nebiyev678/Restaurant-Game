@@ -502,12 +502,14 @@ export default function App() {
         sound.playClick();
         setCookModal({ station, suggestedOrder });
       },
-      onDishReady: (recipeId, qualityBonus, station) => {
+      onDishReady: (recipeId, qualityBonus, station, collected) => {
         sound.playBell();
         haptic(HAPTIC.success);
         const name = RECIPES[recipeId].name;
         pushPopup(
-          `${qualityBonus > 1 ? 'Perfect ' : ''}${name} ready! Take it from the ${STATION_INFO[station].short}`,
+          collected
+            ? `${qualityBonus > 1 ? 'Perfect ' : ''}${name} ready! Serve it`
+            : `${qualityBonus > 1 ? 'Perfect ' : ''}${name} ready! Collect it at the ${STATION_INFO[station].short}`,
           'amber'
         );
       },
@@ -1445,8 +1447,8 @@ export default function App() {
       ? 'Drag on the left side to walk to the glowing Grill or Fryer, then tap the Cook button.'
       : 'Walk to the glowing Grill or Fryer and press Space / Cook to prepare a dish.',
     isTouch
-      ? 'When the machine shows “Take!”, grab the dish there, carry it to the table and tap Serve!'
-      : 'When the machine shows “Take!”, grab the dish there and carry it to the customer to serve!',
+      ? 'Wait in the machine’s circle, or come back when it shows “Take!”, then carry the dish to the table and tap Serve!'
+      : 'Wait in the machine’s circle, or come back when it shows “Take!”, then carry the dish to the customer to serve!',
     'Open Restaurant or Staff below to upgrade equipment or hire a Chef & Waiter.',
     'Withdraw profits in City > Bank, then buy outfits & cars in Lifestyle!',
   ];

@@ -210,7 +210,7 @@ export interface EngineCallbacks {
   onTableCleaned: () => void;
   onDirtyChanged: (cleanlinessDelta: number) => void;
   /** A machine finished cooking; the dish now waits on that machine for the chef to take it. */
-  onDishReady: (recipeId: RecipeId, qualityBonus: number, station: StationType) => void;
+  onDishReady: (recipeId: RecipeId, qualityBonus: number, station: StationType, collected: boolean) => void;
   /** Fired once when the in-game clock passes midnight during active play. */
   onDayEnded: () => void;
   /** Fired when a hired staff member finishes a task (cooking, serving, cleaning, checkout). */
@@ -340,6 +340,8 @@ export class RestaurantWorldEngine {
   static readonly PASS_SLOTS = 6;
   /** Height of a kitchen machine's work surface (finished dishes sit here). */
   static readonly STATION_TOP_Y = 1.08;
+  /** Standing inside a machine's floor circle (outer radius 0.72) collects its finished dish. */
+  static readonly STATION_COLLECT_RADIUS = 0.95;
   private staffAgents: SimStaff[] = [];
 
   private spawnTimer = 1.5;
@@ -503,6 +505,16 @@ export class RestaurantWorldEngine {
     for (const [type, job] of this.cookJobs) {
       const st = this.stations.find((s) => s.type === type);
       if (job.done) {
+        // Chef standing in the machine's circle with empty hands collects it straight away
+        if (
+          st &&
+          !this.heldRecipe &&
+          !this.inVehicle &&
+          Math.hypot(this.playerPos.x - st.x, this.playerPos.z - st.z) < RestaurantWorldEngine.STATION_COLLECT_RADIUS
+        ) {
+          this.takeFromStation(type);
+          continue;
+        }
         // Finished dish sits on the machine (re-added if the restaurant was rebuilt)
         if (st && (!job.mesh || !job.mesh.parent)) this.placeDishOnStation(type, job);
         if (job.mesh) job.mesh.rotation.y += dt * 0.8;
@@ -524,9 +536,18 @@ export class RestaurantWorldEngine {
       job.done = true;
       job.remaining = 0;
       job.steam = 0.6;
-      this.placeDishOnStation(type, job);
       if (st) this.spawnBurst(st.mx + 0.15, 1.3, st.mz, '#facc15', 8);
-      this.callbacks.onDishReady(job.recipeId, job.quality, type);
+      const inCircle =
+        !!st &&
+        !this.heldRecipe &&
+        !this.inVehicle &&
+        Math.hypot(this.playerPos.x - st.x, this.playerPos.z - st.z) < RestaurantWorldEngine.STATION_COLLECT_RADIUS;
+      if (inCircle) {
+        this.takeFromStation(type);
+      } else {
+        this.placeDishOnStation(type, job);
+      }
+      this.callbacks.onDishReady(job.recipeId, job.quality, type, inCircle);
     }
 
     // Chef walked over after tapping the machine sign: pick the dish up on arrival
