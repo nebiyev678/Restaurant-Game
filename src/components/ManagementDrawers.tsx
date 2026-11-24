@@ -1671,6 +1671,9 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                 </div>
                 <PWAInstallButton variant="settings" />
               </div>
+              <p className="text-[10px] text-slate-500 text-center pt-1">
+                3D food models: Food Kit by Kenney (kenney.nl), CC0. Thank you!
+              </p>
             </div>
           )}
         </div>

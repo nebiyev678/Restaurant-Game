@@ -5,6 +5,7 @@ import { QUALITY_PRESETS, ResolvedQuality } from './mobile';
 import { ParkingTraffic } from './parking';
 import { CUISINES, getAlbumPriceMult, getMenuRecipes, getNextCuisine } from './cuisines';
 import { createCuisineDecor } from './cuisineDecor';
+import { CookVisual, createCookVisual, loadFoodModels } from './foodModels';
 import {
   createBagStack,
   createCozyPendant,
@@ -44,6 +45,7 @@ import {
   getCleanlinessReputationMult,
   getPrestigeTipBonus,
   getEffectiveTier,
+  qualityStars,
 } from './data';
 import {
   CharacterParts,
@@ -229,6 +231,8 @@ export interface EngineCallbacks {
   onDirtyChanged: (cleanlinessDelta: number) => void;
   /** A machine finished cooking; the dish now waits on that machine for the chef to take it. */
   onDishReady: (recipeId: RecipeId, qualityBonus: number, station: StationType, collected: boolean) => void;
+  /** The chef hit the optional "Perfect!" tap while a dish cooked. */
+  onCookPerfect?: (recipeId: RecipeId, qualityBonus: number) => void;
   /** Fired once when the in-game clock passes midnight during active play. */
   onDayEnded: () => void;
   /** Fired when a hired staff member finishes a task (cooking, serving, cleaning, checkout). */
@@ -361,8 +365,19 @@ export class RestaurantWorldEngine {
       steam: number;
       done?: boolean;
       mesh?: THREE.Group;
+      /** Step-by-step look while cooking. */
+      visual?: CookVisual;
+      /** Optional "Perfect!" tap window (progress 0..1) and whether the chef hit it. */
+      perfectFrom: number;
+      perfectTo: number;
+      perfectHit?: boolean;
+      sparkle?: number;
     }
   >();
+  /** Dishes on machines are drawn a little larger so each cooking step reads clearly. */
+  private static readonly STATION_DISH_SCALE = 1.2;
+  /** Most quality a dish can reach (3 stars). */
+  public static readonly MAX_QUALITY = 1.3;
   /** Machine the chef is walking to in order to pick up its finished dish. */
   private pendingTakeStation: StationType | null = null;
   /** Beginner tutorial: what the bouncing arrow points at, and the calm one-guest mode. */
@@ -430,6 +445,12 @@ export class RestaurantWorldEngine {
     this.syncDynamicWorld(true);
     this.bindEvents();
     this.startLoop();
+    // Detailed food models arrive a moment later: refresh dishes already on screen
+    loadFoodModels().then(() => {
+      if (this.disposed) return;
+      if (this.heldRecipe) this.setHeldDish(this.heldRecipe, this.heldQuality);
+      for (const [key, job] of this.cookJobs) if (job.done) this.placeDishOnStation(key.split(':')[0] as StationType, job);
+    });
   }
 
   /** Portrait phones get a wider field of view so the restaurant still fits on screen. */
@@ -528,7 +549,8 @@ export class RestaurantWorldEngine {
     const def = RECIPES[recipeId];
     const eqLevel = this.saveRef.current.equipmentLevels[def.station] ?? 1;
     const pro = (this.saveRef.current.expansions ?? []).includes('pro_kitchen') ? 0.8 : 1;
-    return Math.max(1.5, (def.basePrepTime * 0.55 - (eqLevel - 1) * 0.25) * pro);
+    // Long enough to watch the dish come together step by step
+    return Math.max(3, (def.basePrepTime - (eqLevel - 1) * 0.3) * pro);
   }
 
   public isStationBusy(type: StationType): boolean {
@@ -558,8 +580,46 @@ export class RestaurantWorldEngine {
     if (used.length >= this.stationSlots()) return false;
     const slot = used.includes(0) ? 1 : 0;
     const total = this.cookDuration(recipeId);
-    this.cookJobs.set(`${station}:${slot}`, { type: station, slot, recipeId, quality: qualityBonus, remaining: total, total, steam: 0 });
+    // Optional "Perfect!" moment near the end; at least 1.3 s so it is easy to catch
+    const half = Math.min(0.3, Math.max(0.1, 1.3 / total / 2));
+    const dish = createDishMesh(recipeId);
+    this.cookJobs.set(`${station}:${slot}`, {
+      type: station,
+      slot,
+      recipeId,
+      quality: qualityBonus,
+      remaining: total,
+      total,
+      steam: 0,
+      perfectFrom: 0.7 - half,
+      perfectTo: 0.7 + half,
+      visual: createCookVisual(recipeId, dish, total),
+      mesh: dish,
+    });
+    this.placeGroupOnStation(station, slot, dish);
     sound.playSizzle();
+    return true;
+  }
+
+  /** The cooking (not yet finished) dish on this machine whose "Perfect!" moment is open now. */
+  private perfectJobAt(type: StationType) {
+    return this.jobsAt(type).find((j) => {
+      if (j.done || j.perfectHit) return false;
+      const p = 1 - j.remaining / j.total;
+      return p >= j.perfectFrom && p <= j.perfectTo;
+    });
+  }
+
+  /** Optional skill tap while cooking: inside the glowing moment it adds a star. */
+  public tapPerfect(type: StationType): boolean {
+    const job = this.perfectJobAt(type);
+    if (!job) return false;
+    job.perfectHit = true;
+    job.quality = Math.min(RestaurantWorldEngine.MAX_QUALITY, job.quality + 0.15);
+    const st = this.stations.find((s) => s.type === type);
+    if (st) this.spawnBurst(st.mx + (st.x - st.mx) * 0.22, 1.4, st.mz + (st.z - st.mz) * 0.22, '#facc15', 14);
+    sound.playPerfectCook();
+    this.callbacks.onCookPerfect?.(job.recipeId, job.quality);
     return true;
   }
 
@@ -594,7 +654,22 @@ export class RestaurantWorldEngine {
         job.steam = 0.45;
         this.spawnBurst(st.mx + 0.15, 1.35, st.mz, '#e5e7eb', 3);
       }
+      const progress = THREE.MathUtils.clamp(1 - job.remaining / job.total, 0, 1);
+      if (job.visual) {
+        if (st && job.mesh && !job.mesh.parent) this.placeGroupOnStation(type, job.slot, job.mesh);
+        job.visual.update(progress);
+        // Glow while the "Perfect!" moment is open
+        const open = !job.perfectHit && progress >= job.perfectFrom && progress <= job.perfectTo;
+        if (job.mesh) job.mesh.scale.setScalar(RestaurantWorldEngine.STATION_DISH_SCALE * (open ? 1 + Math.sin(performance.now() / 70) * 0.05 : 1));
+        job.sparkle = (job.sparkle ?? 0) - dt;
+        if (open && st && job.sparkle <= 0) {
+          job.sparkle = 0.22;
+          this.spawnBurst(job.mesh?.position.x ?? st.mx, 1.45, job.mesh?.position.z ?? st.mz, '#fde047', 2);
+        }
+      }
       if (job.remaining > 0) continue;
+      job.visual?.dispose();
+      job.visual = undefined;
       // Done: the dish stays on its machine until the chef comes to take it
       job.done = true;
       job.remaining = 0;
@@ -627,14 +702,21 @@ export class RestaurantWorldEngine {
   }
 
   private placeDishOnStation(type: StationType, job: { recipeId: RecipeId; slot?: number; mesh?: THREE.Group }) {
-    const st = this.stations.find((s) => s.type === type);
-    if (!st) return;
     if (job.mesh) job.mesh.removeFromParent();
     const dish = createDishMesh(job.recipeId);
-    dish.scale.setScalar(0.95);
+    if (this.placeGroupOnStation(type, job.slot ?? 0, dish)) job.mesh = dish;
+  }
+
+  /** Sets a dish (or a dish being cooked) on the machine's front edge; slot 1 sits beside slot 0. */
+  private placeGroupOnStation(type: StationType, slot: number, dish: THREE.Group): boolean {
+    const st = this.stations.find((s) => s.type === type);
+    if (!st) return false;
+    dish.scale.setScalar(RestaurantWorldEngine.STATION_DISH_SCALE);
     // Front edge of the machine, toward where the chef stands
     dish.position.set(st.mx + (st.x - st.mx) * 0.22, RestaurantWorldEngine.STATION_TOP_Y, st.mz + (st.z - st.mz) * 0.22);
-    if (job.slot === 1) {
+    // Face the chef
+    dish.rotation.y = Math.atan2(st.x - st.mx, st.z - st.mz);
+    if (slot === 1) {
       // Second burner: sit beside the first dish
       const dx = st.x - st.mx;
       const dz = st.z - st.mz;
@@ -643,7 +725,7 @@ export class RestaurantWorldEngine {
       dish.position.z += (dx / len) * 0.42;
     }
     this.restaurantGroup.add(dish);
-    job.mesh = dish;
+    return true;
   }
 
   /**
@@ -847,6 +929,8 @@ export class RestaurantWorldEngine {
 
   /** Opens the cooking window for a machine (from its floating sign). */
   public openCookAtStation(type: StationType) {
+    // Optional skill tap: the cooking dish is glowing for its "Perfect!" moment
+    if (this.tapPerfect(type)) return;
     // A finished dish is waiting: take it here, or walk over and take it on arrival
     if (this.readyJobAt(type) && !this.heldRecipe && !this.inVehicle) {
       if (this.takeFromStation(type)) return;
@@ -1084,6 +1168,10 @@ export class RestaurantWorldEngine {
     // A forced sync (new career / reset) must not be mistaken for a midnight rollover.
     if (force) {
       this.lastTimeOfDay = -1;
+      this.cookJobs.forEach((j) => {
+        j.mesh?.removeFromParent();
+        j.visual?.dispose();
+      });
       this.cookJobs.clear();
       this.parking?.clear();
       this.streakCount = 0;
@@ -2391,7 +2479,10 @@ export class RestaurantWorldEngine {
       t.dirty = false;
     }
     this.readyDishes = [];
-    this.cookJobs.forEach((j) => j.mesh?.removeFromParent());
+    this.cookJobs.forEach((j) => {
+      j.mesh?.removeFromParent();
+      j.visual?.dispose();
+    });
     this.cookJobs.clear();
     this.pendingTakeStation = null;
     this.clearHeldDish();
@@ -2427,6 +2518,7 @@ export class RestaurantWorldEngine {
     if (!prompt) return;
 
     if (prompt.actionType === 'cook_station' && prompt.stationType) {
+      if (this.tapPerfect(prompt.stationType)) return;
       const matchingOrder =
         this.orders.find((o) => this.remainingAtStation(o, prompt.stationType!)) ??
         this.orders.find((o) => o.status === 'waiting') ??
@@ -2552,6 +2644,17 @@ export class RestaurantWorldEngine {
     if (playerInside) {
       for (const st of this.stations) {
         if (Math.hypot(this.playerPos.x - st.x, this.playerPos.z - st.z) < 2.15) {
+          // Optional skill moment while a dish cooks here
+          const glowing = this.perfectJobAt(st.type);
+          if (glowing) {
+            return {
+              id: `perfect_${st.type}`,
+              label: 'TAP! ★ Perfect',
+              sublabel: `Bonus star for ${RECIPES[glowing.recipeId].name}`,
+              actionType: 'cook_station',
+              stationType: st.type,
+            };
+          }
           const readyJob = this.readyJobAt(st.type);
           if (readyJob) {
             return {
@@ -4539,6 +4642,21 @@ export class RestaurantWorldEngine {
             return j ? THREE.MathUtils.clamp(1 - j.remaining / j.total, 0, 1) : undefined;
           })(),
           cookReady: !!this.readyJobAt(st.type),
+          ...(() => {
+            const j = this.readyJobAt(st.type) ?? this.jobsAt(st.type).find((x) => !x.done);
+            if (!j) return {};
+            const p = j.done ? 1 : THREE.MathUtils.clamp(1 - j.remaining / j.total, 0, 1);
+            const steps = j.visual?.steps;
+            const idx = j.visual ? j.visual.stepAt(p) : 0;
+            return {
+              cookStep: steps?.[idx],
+              cookStepIndex: idx,
+              cookStepCount: steps?.length,
+              cookSecondsLeft: Math.ceil(j.remaining),
+              cookPerfectOpen: !j.done && !j.perfectHit && p >= j.perfectFrom && p <= j.perfectTo,
+              cookStars: qualityStars(j.quality),
+            };
+          })(),
           label: STATION_INFO[st.type].short,
           stationType: st.type,
           recipeIds,

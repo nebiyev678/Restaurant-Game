@@ -3,6 +3,7 @@ import { ImageOff, Rotate3d } from 'lucide-react';
 import * as THREE from 'three';
 import { PreviewKind, buildPreviewModel, previewKey, previewShot } from '../game/previewModels';
 import { ShotOptions, previewStudio } from '../game/previewStudio';
+import { loadFoodModels } from '../game/foodModels';
 
 // ---------------------------------------------------------------------------
 // Static thumbnail of any item, rendered from its real in-game 3D model
@@ -29,8 +30,10 @@ export const PreviewThumb: React.FC<PreviewThumbProps> = ({ kind, id, alt, class
       return;
     }
     setUrl(undefined);
-    previewStudio
-      .thumbnail(key, () => buildPreviewModel(kind, id), previewShot(kind, id))
+    // Dish pictures use the detailed food models: wait for them (a moment on first launch)
+    const ready = kind === 'recipe' || kind === 'line' ? loadFoodModels() : Promise.resolve();
+    ready
+      .then(() => previewStudio.thumbnail(key, () => buildPreviewModel(kind, id), previewShot(kind, id)))
       .then((u) => {
         if (!alive) return;
         if (u) setUrl(u);

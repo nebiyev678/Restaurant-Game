@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { addWorldDish } from './worldDishes';
+import { addFoodModel } from './foodModels';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import {
   CafeThemeDef,
@@ -1774,6 +1775,9 @@ export function createDishMesh(recipeId: RecipeId): THREE.Group {
   plate.position.y = 0.022;
   plate.receiveShadow = true;
   group.add(plate);
+
+  // Detailed stylized food models (Kenney Food Kit) once loaded
+  if (addFoodModel(recipeId, group, 0.045)) return group;
 
   // Country-restaurant dishes (Italy, Japan, Mexico, Azerbaijan)
   if (addWorldDish(recipeId, group)) return group;

@@ -556,6 +556,15 @@ export interface ProjectedBubble {
   cookProgress?: number;
   /** The dish finished cooking and waits on the machine for the chef to take it. */
   cookReady?: boolean;
+  /** Current cooking step (e.g. "Cook meat"), its number and the step count. */
+  cookStep?: string;
+  cookStepIndex?: number;
+  cookStepCount?: number;
+  cookSecondsLeft?: number;
+  /** The optional "Perfect!" tap is open right now. */
+  cookPerfectOpen?: boolean;
+  /** Quality so far / of the finished dish: 1–3 stars. */
+  cookStars?: number;
   /** World-space point the bubble follows; the HUD re-projects it every rendered frame. */
   anchor?: { x: number; y: number; z: number };
   /** Covered machine the player hasn't unlocked yet, and the level that unlocks it. */

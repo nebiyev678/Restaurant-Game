@@ -49,6 +49,16 @@ const topics = (isTouch: boolean, side: 'left' | 'right'): Topic[] => [
       'Each dish is made on its own machine (grill, fryer, oven…). The sign above a machine shows what it makes.',
       'Stand in the machine’s circle and tap Cook, or tap the sign above it.',
       'A machine cooks one dish at a time. Covered machines unlock when you reach the level shown.',
+      'Watch the dish come together step by step on the machine. The ring under the sign is the timer.',
+    ],
+  },
+  {
+    icon: '⭐',
+    title: 'Dish quality (optional)',
+    points: [
+      '★ Every dish is at least good. ★★ Tap the cooking bar in the green.',
+      '★★★ While it cooks, the machine glows and shows TAP!: tap it (or Cook) for a perfect dish.',
+      'More stars sell for more and bring bigger tips. Skipping the taps is fine.',
     ],
   },
   {
