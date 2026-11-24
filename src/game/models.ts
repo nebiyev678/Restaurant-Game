@@ -3153,17 +3153,20 @@ export function createDiningTableMesh(isVip = false, theme?: CafeThemeDef): Dini
 
   if (isVip) {
     // Bordered Crimson Area Rug under VIP Booth
+    // Layers sit clearly apart (floor top ≈ 0.01, border top 0.03, centre top 0.045) so phones
+    // with a low-precision depth buffer don't flicker between them
     const rugOuter = new THREE.Mesh(
-      new THREE.BoxGeometry(2.58, 0.018, 1.54),
+      new THREE.BoxGeometry(2.58, 0.024, 1.54),
       new THREE.MeshStandardMaterial({ color: '#991b1b', roughness: 0.85 })
     );
-    rugOuter.position.y = 0.012;
+    rugOuter.position.y = 0.018;
     rugOuter.receiveShadow = true;
-    const rugInner = new THREE.Mesh(
-      new THREE.BoxGeometry(2.34, 0.022, 1.32),
-      cushionMat
-    );
-    rugInner.position.y = 0.014;
+    const rugInnerMat = cushionMat.clone();
+    rugInnerMat.polygonOffset = true;
+    rugInnerMat.polygonOffsetFactor = -1;
+    rugInnerMat.polygonOffsetUnits = -2;
+    const rugInner = new THREE.Mesh(new THREE.BoxGeometry(2.34, 0.024, 1.32), rugInnerMat);
+    rugInner.position.y = 0.033;
     rugInner.receiveShadow = true;
     group.add(rugOuter, rugInner);
 
