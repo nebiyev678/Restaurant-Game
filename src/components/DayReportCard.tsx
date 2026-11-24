@@ -51,6 +51,60 @@ export const DayReportCard: React.FC<DayReportCardProps> = ({
     });
   }
 
+  // Phone: one slim card. Day, stars, served and profit on one line, plus the best reason to
+  // come back tomorrow. Tapping it opens the full breakdown.
+  if (compact && !expanded) {
+    const t = report.tomorrow;
+    const hook = t?.special
+      ? `${RECIPES[t.special].name} Day · +${Math.round(DAILY_SPECIAL_BONUS * 100)}%`
+      : report.starStreak > 0
+        ? `${report.starStreak}-day ★★ streak: keep it going`
+        : t?.goal
+          ? describeQuickGoal(t.goal)
+          : null;
+    return (
+      <div
+        role="status"
+        className="fixed z-40 left-1/2 -translate-x-1/2 w-[min(84vw,300px)] pointer-events-auto rounded-xl bg-slate-950/90 border border-indigo-400/40 shadow-xl animate-slide-in flex items-stretch"
+        style={{ top: 'calc(max(0.5rem, env(safe-area-inset-top)) + 2.75rem)' }}
+      >
+        <button
+          onClick={() => setExpanded(true)}
+          className="flex-1 min-w-0 pl-2.5 pr-1 py-1.5 text-left cursor-pointer"
+          aria-label={`Day ${report.dayNumber} closed, ${report.stars} of 3 stars, ${s.customersServed} served. Tap for details`}
+        >
+          <span className="flex items-center gap-1.5 text-[11px] font-bold text-white whitespace-nowrap">
+            <Moon className="w-3 h-3 text-indigo-300 shrink-0" />
+            Day {report.dayNumber}
+            <span className="flex" aria-hidden>
+              {[0, 1, 2].map((i) => (
+                <Star key={i} className={`w-3 h-3 ${i < report.stars ? 'fill-amber-400 text-amber-300' : 'text-slate-600'}`} />
+              ))}
+            </span>
+            <span className="font-normal text-slate-400">{s.customersServed} served</span>
+            <span className={`ml-auto font-mono-num font-extrabold ${positive ? 'text-emerald-300' : 'text-rose-300'}`}>
+              {positive ? '+' : '-'}
+              {money(Math.abs(report.netProfit))}
+            </span>
+          </span>
+          {hook && (
+            <span className="mt-0.5 flex items-center gap-1 text-[10px] text-slate-300 truncate">
+              <span className="text-indigo-300 font-bold uppercase tracking-wide">Tomorrow</span>
+              <span className="truncate">{hook}</span>
+            </span>
+          )}
+        </button>
+        <button
+          onClick={onClose}
+          className="px-2 text-slate-400 hover:text-white cursor-pointer shrink-0"
+          aria-label="Close day report"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div
       role="status"
