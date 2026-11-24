@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { addWorldDish } from './worldDishes';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import {
   CafeThemeDef,
   ClothingItem,
@@ -3099,7 +3100,8 @@ export function createDiningTableMesh(isVip = false, theme?: CafeThemeDef): Dini
   // Square Honey-Oak Tabletop with beveled trim & dark charcoal square pedestal
   const topW = isVip ? 0.96 : 1.16;
   const topD = isVip ? 1.18 : 1.12;
-  const top = new THREE.Mesh(new THREE.BoxGeometry(topW, 0.085, topD), oakMat);
+  // Soft rounded edges for a chunky, cozy look
+  const top = new THREE.Mesh(new RoundedBoxGeometry(topW, 0.09, topD, 3, 0.035), oakMat);
   top.position.y = 0.76;
   top.castShadow = true;
   top.receiveShadow = true;
@@ -3169,16 +3171,16 @@ export function createDiningTableMesh(isVip = false, theme?: CafeThemeDef): Dini
 
       const shellBase = new THREE.Mesh(new THREE.BoxGeometry(1.18, 0.26, 0.56), darkWoodMat);
       shellBase.position.set(0, 0.14, 0);
-      const seatCushion = new THREE.Mesh(new THREE.BoxGeometry(1.08, 0.18, 0.48), cushionMat);
+      const seatCushion = new THREE.Mesh(new RoundedBoxGeometry(1.08, 0.18, 0.48, 3, 0.06), cushionMat);
       seatCushion.position.set(0, 0.35, 0.02);
       seatCushion.castShadow = true;
-      const backShell = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.96, 0.14), darkWoodMat);
+      const backShell = new THREE.Mesh(new RoundedBoxGeometry(1.2, 0.96, 0.14, 2, 0.05), darkWoodMat);
       backShell.position.set(0, 0.52, -0.24);
       backShell.castShadow = true;
 
       // Tufted vertical ribs on booth backrest
       for (let t = -2; t <= 2; t++) {
-        const rib = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.56, 0.12), cushionMat);
+        const rib = new THREE.Mesh(new RoundedBoxGeometry(0.19, 0.56, 0.12, 2, 0.045), cushionMat);
         rib.position.set(t * 0.21, 0.66, -0.14);
         rib.castShadow = true;
         booth.add(rib);
@@ -3197,7 +3199,7 @@ export function createDiningTableMesh(isVip = false, theme?: CafeThemeDef): Dini
       const frame = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.075, 0.48), oakMat);
       frame.position.y = 0.42;
       frame.castShadow = true;
-      const cushion = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.08, 0.42), cushionMat);
+      const cushion = new THREE.Mesh(new RoundedBoxGeometry(0.42, 0.09, 0.42, 3, 0.035), cushionMat);
       cushion.position.y = 0.49;
       cushion.castShadow = true;
 
