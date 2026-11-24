@@ -61,6 +61,11 @@ export const FOOD_STREET = {
   clockTower: { x: 17.5, z: -60.2 },
 } as const;
 
+/** Outdoor Terrace expansion: guest table x positions (relative to the restaurant front) and terrace depth. */
+export const TERRACE_TABLE_X = [1.7, 4.3] as const;
+export const TERRACE_TABLE_Z = 5.25;
+export const TERRACE_OPEN_X_OUT = 5.8;
+
 /** Riverside park south of the customer parking street. */
 export const TOWN_PARK = {
   pond: { x: 31, z: 39, rx: 6.5, rz: 4.2 },
@@ -1526,14 +1531,19 @@ export interface TerraceTheme {
 export function createStreetTerrace(
   side: 1 | -1,
   theme: TerraceTheme,
-  withMenuBoard: boolean
+  withMenuBoard: boolean,
+  /**
+   * Outdoor Terrace expansion: the terrace grows a little and only umbrellas are built
+   * here; the engine places real guest tables at TERRACE_TABLE_X.
+   */
+  realSeating = false
 ): { group: THREE.Group; colliders: WorldCollider[] } {
   const g = new THREE.Group();
   const colliders: WorldCollider[] = [];
   const zIn = 3.7 * side;
   const zOut = 6.9 * side;
   const xIn = 0.6;
-  const xOut = 5.2;
+  const xOut = realSeating ? TERRACE_OPEN_X_OUT : 5.2;
 
   const iron = new THREE.MeshStandardMaterial({ color: '#1f2421', metalness: 0.5, roughness: 0.5 });
   const wood = new THREE.MeshStandardMaterial({ color: theme.woodColor, roughness: 0.7 });
@@ -1580,7 +1590,7 @@ export function createStreetTerrace(
   const bloomGeo = new THREE.IcosahedronGeometry(0.11, 0);
   const bloomMats = bloomColors.map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6 }));
   const leafMat = new THREE.MeshStandardMaterial({ color: '#4d7c3a', roughness: 0.8 });
-  for (const bx of [1.6, 3.8]) {
+  for (const bx of realSeating ? [1.7, 4.3] : [1.6, 3.8]) {
     const fb = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.32, 0.34), boxMat);
     fb.position.set(bx, 0.16, zOut - 0.22 * side);
     fb.castShadow = true;
@@ -1600,7 +1610,18 @@ export function createStreetTerrace(
   const stripe = createStripeTexture(theme.umbrellaColor, '#f8f1e4');
   const canopyMat = new THREE.MeshStandardMaterial({ map: stripe, roughness: 0.75, side: THREE.DoubleSide });
   const tableZ = 5.25 * side;
-  for (const tx of [1.75, 3.95]) {
+  if (realSeating) {
+    // Umbrellas only: the guest tables themselves come from the engine
+    for (const tx of TERRACE_TABLE_X) {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 2.3, 8), iron);
+      pole.position.set(tx, 1.15, tableZ);
+      const canopy = new THREE.Mesh(new THREE.ConeGeometry(1.15, 0.45, 8, 1, true), canopyMat);
+      canopy.position.set(tx, 2.38, tableZ);
+      pole.castShadow = canopy.castShadow = true;
+      g.add(pole, canopy);
+    }
+  }
+  for (const tx of realSeating ? [] : [1.75, 3.95]) {
     const top = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.05, 20), wood);
     top.position.set(tx, 0.74, tableZ);
     const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.72, 8), iron);

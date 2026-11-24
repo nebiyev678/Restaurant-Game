@@ -97,6 +97,22 @@ export type RecipeId =
   | 'pakhlava'
   | 'azeri_tea';
 
+/** Restaurant expansions the player buys (dining rooms, terrace, takeaway counter, pro kitchen). */
+export type ExpansionId = 'dining_2' | 'dining_3' | 'dining_4' | 'dining_5' | 'terrace' | 'takeaway' | 'pro_kitchen';
+
+export interface ExpansionDef {
+  id: ExpansionId;
+  name: string;
+  icon: string;
+  description: string;
+  /** Short effect lines shown on the card. */
+  effects: string[];
+  requiredLevel: number;
+  cost: number;
+  /** Must own this one first (dining rooms go in order). */
+  requires?: ExpansionId;
+}
+
 /** Each restaurant in the chain serves one country's food. */
 export type CuisineId = 'bistro' | 'italian' | 'japanese' | 'mexican' | 'azerbaijani';
 
@@ -439,6 +455,8 @@ export interface SaveState {
   guideStep: number;
   /** Which side of the phone screen the movement joystick lives on. */
   joystickSide: 'left' | 'right';
+  /** Expansions bought for the restaurant. */
+  expansions: ExpansionId[];
   isMuted: boolean;
   isMusicMuted: boolean;
   dailyLogin: {
