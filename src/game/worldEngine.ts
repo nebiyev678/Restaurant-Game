@@ -14,6 +14,11 @@ import {
   decorRect,
   getCharmBonus,
   isSeating,
+  isWallItem,
+  wallItemsOverlap,
+  wallY,
+  WALL_MAX_Y,
+  WALL_MIN_Y,
   newDecorUid,
   nextTableNo,
   PlacedDecor,
@@ -359,6 +364,9 @@ export class RestaurantWorldEngine {
   private keepClear: Rect[] = [];
   private serviceReachPoints: { x: number; z: number }[] = [];
   private entrancePoint = { x: 2, z: 0 };
+  private wallZ = -6.72;
+  private wallSpan = { minX: -6, maxX: 2.6 };
+  private wallFixed: { minX: number; maxX: number; minY: number; maxY: number }[] = [];
   private terraceSeating: { x: number; z: number }[] = [];
   private layoutCache = new Map<
     string,
@@ -378,6 +386,11 @@ export class RestaurantWorldEngine {
     startZ: number;
     candX: number;
     candZ: number;
+    /** Wall pieces also move up and down (screen pixels per metre of wall height). */
+    offY: number;
+    startY: number;
+    startClientY: number;
+    candY: number;
     reason: string | null;
     moved: boolean;
   } | null = null;
@@ -1716,28 +1729,13 @@ export class RestaurantWorldEngine {
     const ivyLeft = createHangingIvyShelfMesh(activeTheme.wainscotColor);
     ivyLeft.rotation.y = Math.PI / 2;
     ivyLeft.position.set(minX + 0.47, 2.58, 3.2);
-    const ivyBack = createHangingIvyShelfMesh(activeTheme.wainscotColor);
-    ivyBack.position.set(maxX - 1.5, 2.58, minZ + 0.47);
-    const burgerArt = createFramedBurgerArtMesh(activeTheme.wainscotColor);
-    burgerArt.position.set(maxX - 1.5, 1.72, minZ + 0.34);
-    const sconceBack = createWallSconceMesh(activeTheme.lightColor);
-    sconceBack.position.set(centerX + 2.3, 2.18, minZ + 0.32);
+    // (The dining-room wall lamps, ivy shelf and burger poster are movable wall pieces now)
     const sconceLeft = createWallSconceMesh(activeTheme.lightColor);
     sconceLeft.rotation.y = Math.PI / 2;
     sconceLeft.position.set(minX + 0.32, 2.18, 4.4);
-    this.restaurantGroup.add(ivyLeft, ivyBack, burgerArt, sconceBack, sconceLeft);
-    // Extra wall lamps along the dining room and a warm halo on every wall lamp
-    const sconceSpots: { x: number; z: number; rotY: number }[] = [
-      { x: centerX + 2.3, z: minZ + 0.32, rotY: 0 },
-      { x: minX + 0.32, z: 4.4, rotY: Math.PI / 2 },
-      { x: maxX - 3.8, z: minZ + 0.32, rotY: 0 },
-    ];
-    sconceSpots.slice(2).forEach((sp) => {
-      const sc = createWallSconceMesh(activeTheme.lightColor);
-      sc.rotation.y = sp.rotY;
-      sc.position.set(sp.x, 2.18, sp.z);
-      this.restaurantGroup.add(sc);
-    });
+    this.restaurantGroup.add(ivyLeft, sconceLeft);
+    // Warm halo on the kitchen wall lamp
+    const sconceSpots: { x: number; z: number; rotY: number }[] = [{ x: minX + 0.32, z: 4.4, rotY: Math.PI / 2 }];
     for (const sp of sconceSpots) {
       const halo = createGlowSprite(activeTheme.lightColor, 1.0, 0.45, this.cozyGlows);
       const off = 0.17;
@@ -1959,6 +1957,13 @@ export class RestaurantWorldEngine {
     this.fixedRestaurantColliders = this.restaurantColliders.slice();
     this.diningRect = { minX: kitchenEndX + 0.25, maxX: maxX - 0.3, minZ: minZ + 0.36, maxZ: maxZ - 0.3 };
     this.entrancePoint = { x: maxX - 0.9, z: 0 };
+    // Wall pieces hang on the dining part of the back wall, around the menu board and drink bar
+    this.wallZ = minZ + 0.28;
+    this.wallSpan = { minX: kitchenEndX + 0.25, maxX: maxX - 0.35 };
+    this.wallFixed = [
+      { minX: centerX + 3.8 - 1.32, maxX: centerX + 3.8 + 1.32, minY: 0.9, maxY: 2.86 },
+      { minX: centerX - 1.6 - 0.95, maxX: centerX - 1.6 + 0.95, minY: 0, maxY: 2.4 },
+    ];
     this.keepClear = [
       // Entrance doors and runner
       { minX: maxX - 2.7, maxX: maxX + 1, minZ: -1.45, maxZ: 1.45 },
@@ -2026,6 +2031,23 @@ export class RestaurantWorldEngine {
       for (let i = 0; i < Math.min(tier + 1, plantSpots.length); i++) {
         layout.items.push({ uid: newDecorUid(), item: 'plant_classic', x: plantSpots[i][0], z: plantSpots[i][1], rot: 0 });
       }
+      changed = true;
+    }
+    if (!layout.wallDefaults) {
+      // The wall lamps and pictures the restaurant always had become movable wall pieces
+      const centerX = (b.minX + b.maxX) / 2;
+      const defaults: [DecorItemId, number][] = [
+        ['wall_sconce', centerX + 3.8 - 1.32 - 0.3],
+        ['wall_sconce', centerX + 3.8 + 1.32 + 0.3],
+        ['burger_art', b.maxX - 1.1],
+        ['ivy_shelf', b.maxX - 1.1],
+      ];
+      const items = [...layout.items];
+      for (const [item, x] of defaults) {
+        const cand: PlacedDecor = { uid: newDecorUid(), item, x, z: this.wallZ, rot: 0 };
+        if (!this.wallProblem(items, cand)) items.push(cand);
+      }
+      layout = { ...layout, items, wallDefaults: true };
       changed = true;
     }
     if (tableCount > layout.tablesGranted) {
@@ -2104,7 +2126,7 @@ export class RestaurantWorldEngine {
     for (const p of layout.items) {
       const def = DECOR_BY_ID[p.item];
       if (!def) continue;
-      const key = `${p.item}|${p.x}|${p.z}|${p.rot}|${theme.id}`;
+      const key = `${p.item}|${p.x}|${p.z}|${p.rot}|${p.y ?? ''}|${theme.id}`;
       const entry = place(p.uid, key, () => this.makeLayoutEntry(p, theme));
       itemCols.push(...this.itemColliders(p));
       if (isSeating(p.item) && entry.parts) {
@@ -2156,8 +2178,14 @@ export class RestaurantWorldEngine {
       root.add(pendant);
     } else {
       const mesh = createDecorMesh(p.item, glows, theme);
-      mesh.position.y = 0.1;
-      mesh.rotation.y = p.rot * (Math.PI / 2);
+      const wall = DECOR_BY_ID[p.item].wall;
+      if (wall) {
+        // Hangs on the back wall, facing into the room
+        mesh.position.y = wallY(p);
+      } else {
+        mesh.position.y = 0.1;
+        mesh.rotation.y = p.rot * (Math.PI / 2);
+      }
       root.add(mesh);
     }
     return { root, parts, glows, bulbs };
@@ -2172,7 +2200,7 @@ export class RestaurantWorldEngine {
   /** Solid shapes of one placed item (rugs have none). */
   private itemColliders(p: { item: DecorItemId; x: number; z: number; rot: number }): WorldCollider[] {
     const def = DECOR_BY_ID[p.item];
-    if (def.flat) return [];
+    if (def.flat || def.wall) return [];
     if (isSeating(p.item)) {
       const alongZ = p.rot % 2 === 1;
       const box = (cx: number, cz: number, hx: number, hz: number): WorldCollider =>
@@ -2197,9 +2225,28 @@ export class RestaurantWorldEngine {
 
   /** Overlap with other furniture only (used when handing out default tables). */
   private overlapsLayout(items: PlacedDecor[], cand: PlacedDecor): boolean {
+    if (isWallItem(cand.item)) return items.some((o) => o.uid !== cand.uid && wallItemsOverlap(o, cand));
     const r = decorRect(cand, 0.02);
     const flat = !!DECOR_BY_ID[cand.item].flat;
-    return items.some((o) => o.uid !== cand.uid && !!DECOR_BY_ID[o.item].flat === flat && rectsOverlap(r, decorRect(o)));
+    return items.some(
+      (o) => o.uid !== cand.uid && !isWallItem(o.item) && !!DECOR_BY_ID[o.item].flat === flat && rectsOverlap(r, decorRect(o))
+    );
+  }
+
+  /** Placement rules for wall pieces: along the dining wall, clear of the menu board, bar and each other. */
+  private wallProblem(items: PlacedDecor[], cand: PlacedDecor): string | null {
+    const def = DECOR_BY_ID[cand.item];
+    const wall = def.wall!;
+    if (cand.x - def.w / 2 < this.wallSpan.minX || cand.x + def.w / 2 > this.wallSpan.maxX) return 'Keep it on the dining-room wall';
+    const y0 = wallY(cand) - wall.h / 2;
+    const y1 = wallY(cand) + wall.h / 2;
+    if (y0 < WALL_MIN_Y - 1e-3) return 'Too low: hang it higher';
+    if (y1 > WALL_MAX_Y + 1e-3) return 'Too high: hang it lower';
+    if (this.wallFixed.some((f) => cand.x + def.w / 2 > f.minX && cand.x - def.w / 2 < f.maxX && y1 > f.minY && y0 < f.maxY)) {
+      return 'The menu board or drink bar is there';
+    }
+    if (this.overlapsLayout(items, cand)) return 'Too close to another wall piece';
+    return null;
   }
 
   /**
@@ -2208,6 +2255,7 @@ export class RestaurantWorldEngine {
    * counter and the machines can still be reached from the door.
    */
   private placementProblem(items: PlacedDecor[], cand: PlacedDecor): string | null {
+    if (isWallItem(cand.item)) return this.wallProblem(items, cand);
     const def = DECOR_BY_ID[cand.item];
     const r = decorRect(cand);
     const d = this.diningRect;
@@ -2220,7 +2268,7 @@ export class RestaurantWorldEngine {
     // Can everyone still get everywhere?
     const all = items.filter((o) => o.uid !== cand.uid).concat(cand);
     const cols: WorldCollider[] = [];
-    for (const o of all) cols.push(...this.itemColliders(o));
+    for (const o of all) if (!isWallItem(o.item)) cols.push(...this.itemColliders(o));
     for (const t of this.terraceSeating) cols.push(...this.itemColliders({ item: 'table_oak', x: t.x, z: t.z, rot: 0 }));
     this.checkNav.rebuild(0.3, this.nearbyStaticColliders, this.fixedRestaurantColliders, cols);
     const flood = this.checkNav.floodFrom(this.entrancePoint.x, this.entrancePoint.z);
@@ -2239,7 +2287,18 @@ export class RestaurantWorldEngine {
   }
 
   /** A free, valid spot for a new item, searching outward from the middle of the dining room. */
-  private findFreeSpot(items: PlacedDecor[], item: DecorItemId, strict = true, rot = 0): { x: number; z: number } | null {
+  private findFreeSpot(items: PlacedDecor[], item: DecorItemId, strict = true, rot = 0): { x: number; z: number; y?: number } | null {
+    if (isWallItem(item)) {
+      const mid = (this.wallSpan.minX + this.wallSpan.maxX) / 2;
+      const xs: number[] = [];
+      for (let x = this.wallSpan.minX; x <= this.wallSpan.maxX; x += 0.25) xs.push(snapToGrid(x));
+      xs.sort((a, b) => Math.abs(a - mid) - Math.abs(b - mid));
+      const base = DECOR_BY_ID[item].wall!.y;
+      const ys = [base, base + 0.25, base - 0.25, base + 0.5, base - 0.5, base + 0.75, base - 0.75];
+      for (const y of ys)
+        for (const x of xs) if (!this.wallProblem(items, { uid: '__new', item, x, z: this.wallZ, rot: 0, y })) return { x, z: this.wallZ, y };
+      return null;
+    }
     const d = this.diningRect;
     const cx = snapToGrid((d.minX + d.maxX) / 2);
     const cz = snapToGrid((d.minZ + d.maxZ) / 2);
@@ -2391,10 +2450,16 @@ export class RestaurantWorldEngine {
     const drag = this.designDrag && this.designDrag.uid === p.uid ? this.designDrag : null;
     const x = drag ? drag.candX : p.x;
     const z = drag ? drag.candZ : p.z;
-    const r = decorRect({ item: p.item, x, z, rot: p.rot }, 0.06);
     this.designMarker.visible = true;
-    this.designMarker.position.set(x, 0.14, z);
-    this.designMarker.scale.set(r.maxX - r.minX, r.maxZ - r.minZ, 1);
+    if (isWallItem(p.item)) {
+      // A strip on the floor along the wall, under the piece
+      this.designMarker.position.set(x, 0.14, this.wallZ + 0.3);
+      this.designMarker.scale.set(DECOR_BY_ID[p.item].w + 0.1, 0.55, 1);
+    } else {
+      const r = decorRect({ item: p.item, x, z, rot: p.rot }, 0.06);
+      this.designMarker.position.set(x, 0.14, z);
+      this.designMarker.scale.set(r.maxX - r.minX, r.maxZ - r.minZ, 1);
+    }
     const bad = (drag && drag.reason) || this.itemBusy(p);
     (this.designMarker.material as THREE.MeshBasicMaterial).color.set(bad ? '#ef4444' : '#22c55e');
   }
@@ -2419,6 +2484,14 @@ export class RestaurantWorldEngine {
     this.raycaster.setFromCamera(_ndc, this.camera);
     const hit = new THREE.Vector3();
     return this.raycaster.ray.intersectPlane(_floorPlane, hit) ? hit : null;
+  }
+
+  /** How many screen pixels one metre of wall height covers at this wall piece. */
+  private wallPixelsPerMetre(p: PlacedDecor): number {
+    const y = wallY(p);
+    const a = this.projectToScreen(p.x, y - 0.5, this.wallZ);
+    const b = this.projectToScreen(p.x, y + 0.5, this.wallZ);
+    return Math.hypot(a.x - b.x, a.y - b.y) || 60;
   }
 
   private pickLayoutItem(clientX: number, clientY: number): string | null {
@@ -2464,7 +2537,21 @@ export class RestaurantWorldEngine {
       const p = this.layoutItem(uid)!;
       this.designDrag = this.itemBusy(p)
         ? null
-        : { uid, offX: p.x - fp.x, offZ: p.z - fp.z, startX: p.x, startZ: p.z, candX: p.x, candZ: p.z, reason: null, moved: false };
+        : {
+            uid,
+            offX: p.x - fp.x,
+            offZ: p.z - fp.z,
+            startX: p.x,
+            startZ: p.z,
+            candX: p.x,
+            candZ: p.z,
+            offY: this.wallPixelsPerMetre(p),
+            startY: wallY(p),
+            startClientY: e.clientY,
+            candY: wallY(p),
+            reason: null,
+            moved: false,
+          };
       sound.playClick();
     } else {
       this.designSel = null;
@@ -2477,21 +2564,27 @@ export class RestaurantWorldEngine {
 
   private designPointerMove(e: PointerEvent) {
     if (e.pointerId !== this.designPointerId) return;
+    const dragged = this.designDrag ? this.layoutItem(this.designDrag.uid) : undefined;
+    const onWall = !!dragged && isWallItem(dragged.item);
     const fp = this.floorPointAt(e.clientX, e.clientY);
     if (!fp) return;
     if (this.designDrag) {
       const drag = this.designDrag;
       const nx = snapToGrid(fp.x + drag.offX);
-      const nz = snapToGrid(fp.z + drag.offZ);
-      if (nx === drag.candX && nz === drag.candZ) return;
+      // Wall pieces slide along the wall and up or down on it
+      const nz = onWall ? this.wallZ : snapToGrid(fp.z + drag.offZ);
+      // Left/right follows the finger over the floor; up/down follows the finger's height on screen
+      const ny = onWall ? snapToGrid(drag.startY + (drag.startClientY - e.clientY) / Math.max(10, drag.offY)) : drag.candY;
+      if (nx === drag.candX && nz === drag.candZ && ny === drag.candY) return;
       drag.candX = nx;
       drag.candZ = nz;
+      drag.candY = ny;
       drag.moved = true;
       const layout = this.saveRef.current.layout!;
       const p = layout.items.find((i) => i.uid === drag.uid)!;
-      drag.reason = this.placementProblem(layout.items, { ...p, x: nx, z: nz });
+      drag.reason = this.placementProblem(layout.items, onWall ? { ...p, x: nx, z: nz, y: ny } : { ...p, x: nx, z: nz });
       const entry = this.layoutCache.get(drag.uid);
-      if (entry) entry.root.position.set(nx, 0.06, nz);
+      if (entry) entry.root.position.set(nx, onWall ? ny - drag.startY : 0.06, onWall ? nz + 0.04 : nz);
       this.updateDesignMarker();
       this.emitDesignSelection();
     } else if (this.designPan) {
@@ -2521,10 +2614,12 @@ export class RestaurantWorldEngine {
       this.emitDesignSelection(drag.reason);
       return;
     }
-    if (entry) entry.root.position.y = 0;
+    if (entry) entry.root.position.set(drag.candX, 0, drag.candZ);
     this.commitLayout({
       ...layout,
-      items: layout.items.map((i) => (i.uid === drag.uid ? { ...i, x: drag.candX, z: drag.candZ } : i)),
+      items: layout.items.map((i) =>
+        i.uid === drag.uid ? { ...i, x: drag.candX, z: drag.candZ, ...(isWallItem(i.item) ? { y: drag.candY } : {}) } : i
+      ),
     });
     sound.playClick();
     this.emitDesignSelection(null);
@@ -2536,6 +2631,10 @@ export class RestaurantWorldEngine {
     const p = this.layoutItem(this.designSel);
     if (!layout || !p) return null;
     if (this.itemBusy(p)) return 'Guests are seated here';
+    if (isWallItem(p.item)) {
+      this.emitDesignSelection('Wall pieces always face the room');
+      return 'Wall pieces always face the room';
+    }
     const cand = { ...p, rot: (p.rot + 1) % 4 };
     const problem = this.placementProblem(layout.items, cand);
     if (problem) {
@@ -2566,8 +2665,9 @@ export class RestaurantWorldEngine {
     const layout = this.saveRef.current.layout ?? createEmptyLayout();
     const spot = this.findFreeSpot(layout.items, item, true) ?? this.findFreeSpot(layout.items, item, true, 1);
     if (!spot) return { problem: 'No free space. Move or sell something first' };
-    const rot = this.placementProblem(layout.items, { uid: '__new', item, x: spot.x, z: spot.z, rot: 0 }) ? 1 : 0;
+    const rot = !isWallItem(item) && this.placementProblem(layout.items, { uid: '__new', item, x: spot.x, z: spot.z, rot: 0 }) ? 1 : 0;
     const placed: PlacedDecor = { uid: newDecorUid(), item, x: spot.x, z: spot.z, rot };
+    if (spot.y !== undefined) placed.y = spot.y;
     if (isSeating(item)) placed.tableNo = nextTableNo(layout);
     this.designSel = placed.uid;
     this.commitLayout({ ...layout, items: [...layout.items, placed] });

@@ -45,6 +45,8 @@ const TABS: { id: DecorCategory; label: string; icon: string }[] = [
   { id: 'seating', label: 'Tables', icon: '🪑' },
   { id: 'plants', label: 'Plants', icon: '🪴' },
   { id: 'decor', label: 'Decor', icon: '🛋️' },
+  { id: 'wallart', label: 'Wall art', icon: '🖼️' },
+  { id: 'counters', label: 'Counters', icon: '🧁' },
   { id: 'floors', label: 'Floors', icon: '🟫' },
   { id: 'walls', label: 'Walls', icon: '🧱' },
 ];
@@ -119,13 +121,13 @@ export const DesignMode: React.FC<DesignModeProps> = ({
                 <p className="text-[11px] font-semibold text-rose-300 truncate">{selection.problem}</p>
               ) : (
                 <p className="text-[11px] text-slate-400 flex items-center gap-1">
-                  <Move className="w-3 h-3" /> Drag to move · Charm +{selDef.charm}
+                  <Move className="w-3 h-3" /> {selDef.wall ? 'Drag it around the wall' : 'Drag to move'} · Charm +{selDef.charm}
                 </p>
               )}
             </div>
             <button
               onClick={onRotate}
-              disabled={selection.busy}
+              disabled={selection.busy || !!selDef.wall}
               aria-label="Turn"
               className="shrink-0 flex flex-col items-center justify-center w-12 h-12 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-white text-[9px] font-bold cursor-pointer"
             >
@@ -270,6 +272,9 @@ export const DesignMode: React.FC<DesignModeProps> = ({
                     );
                   }))}
             </div>
+            {tab === 'wallart' && (
+              <p className="px-2.5 pb-1.5 text-[10px] text-slate-400">Wall pieces hang on the back wall of the dining room. Drag them left, right, up or down.</p>
+            )}
             {tab === 'seating' && (
               <p className="px-2.5 pb-1.5 text-[10px] text-slate-400 flex items-center gap-1">
                 <Sparkles className="w-3 h-3 text-pink-300" />
