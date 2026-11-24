@@ -1,0 +1,113 @@
+# Builds an installable Android test APK on every push to main (and on demand).
+#
+# Download it on your phone from:
+#   https://github.com/<owner>/<repo>/releases/tag/apk-latest   (direct .apk, newest build)
+# or from the run's "Artifacts" section in the Actions tab (zipped).
+#
+# Every build is signed with the same TEST key (.github/android/test-debug.keystore),
+# so a new APK installs over the old one and keeps your save.
+# This is for testing only: Google Play needs your own private upload key (see PLAY_STORE_GUIDE.md).
+name: Build Android APK
+
+on:
+  push:
+    branches: [main, ci/android-apk-build]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install game dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Add Capacitor (Android wrapper)
+        run: bun add @capacitor/core@^8 @capacitor/android@^8 @capacitor/cli@^8 @capacitor/assets
+
+      - name: Build the game
+        run: bun run build
+
+      - name: Capacitor config as JSON (the CLI can't read .ts with TypeScript 7)
+        run: |
+          bun -e "import c from './capacitor.config.ts'; await Bun.write('capacitor.config.json', JSON.stringify(c, null, 2));"
+          rm capacitor.config.ts
+          cat capacitor.config.json
+
+      - name: Create the Android project
+        run: npx cap add android
+
+      - name: Allow vibration
+        run: |
+          sed -i 's#<application#<uses-permission android:name="android.permission.VIBRATE" />\n    <application#' android/app/src/main/AndroidManifest.xml
+          grep -q 'android.permission.VIBRATE' android/app/src/main/AndroidManifest.xml
+
+      - name: App icon and splash screen
+        run: npx @capacitor/assets generate --android || echo "Icon generation skipped"
+
+      - name: Version number (build ${{ github.run_number }})
+        run: |
+          sed -i -E "s/versionCode [0-9]+/versionCode ${{ github.run_number }}/; s/versionName \"[^\"]*\"/versionName \"1.0.${{ github.run_number }}\"/" android/app/build.gradle
+          grep -E "versionCode|versionName" android/app/build.gradle
+
+      - name: Copy the game into the Android project
+        run: npx cap sync android
+
+      - name: Use the shared test signing key
+        run: |
+          mkdir -p ~/.android
+          cp .github/android/test-debug.keystore ~/.android/debug.keystore
+
+      - name: Build APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Name the APK
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/debug/app-debug.apk "out/RestaurantEmpire-test-${{ github.run_number }}.apk"
+          ls -la out
+
+      - name: Upload as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RestaurantEmpire-test-${{ github.run_number }}
+          path: out/*.apk
+          retention-days: 30
+
+      - name: Publish to the "apk-latest" download page
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete apk-latest --yes --cleanup-tag || true
+          gh release create apk-latest out/*.apk \
+            --prerelease \
+            --target "${{ github.sha }}" \
+            --title "Test build ${{ github.run_number }}" \
+            --notes "Latest test APK (build ${{ github.run_number }}, commit ${GITHUB_SHA::7}). Tap the .apk file below on your Android phone to download and install it. Test build only — not for Google Play."
