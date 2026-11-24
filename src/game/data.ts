@@ -3,6 +3,8 @@ import {
   CafeThemeDef,
   CafeThemeId,
   CuisineId,
+  ExpansionDef,
+  ExpansionId,
   CityZone,
   ClothingItem,
   DailyChallenge,
@@ -1162,6 +1164,134 @@ export function getRestaurantTier(level: number): {
   return { tier: 1, title: 'Small Street-Food Bistro', tableCount: 3 };
 }
 
+/** Size and table count of each restaurant tier. */
+export const TIER_INFO: Record<1 | 2 | 3 | 4 | 5, { title: string; tableCount: number }> = {
+  1: { title: 'Small Street-Food Bistro', tableCount: 3 },
+  2: { title: 'Growing Bistro', tableCount: 5 },
+  3: { title: 'Popular Brasserie', tableCount: 8 },
+  4: { title: 'Premium Fine Dining', tableCount: 10 },
+  5: { title: 'Restaurant Empire Flagship', tableCount: 12 },
+};
+
+export const EXPANSIONS: ExpansionDef[] = [
+  {
+    id: 'takeaway',
+    name: 'Takeaway Counter',
+    icon: '🥡',
+    description: 'A proper to-go counter by the register with a queue for four.',
+    effects: ['Up to 4 takeaway guests at once', 'Some guests order to go even when tables are free', 'No table to clean afterwards'],
+    requiredLevel: 3,
+    cost: 1200,
+  },
+  {
+    id: 'terrace',
+    name: 'Outdoor Terrace',
+    icon: '⛱️',
+    description: 'Open the terraces by the entrance for real guests, under striped umbrellas.',
+    effects: ['+4 outdoor tables', 'More guests at the same time', 'Cozy string lights at night'],
+    requiredLevel: 4,
+    cost: 2500,
+  },
+  {
+    id: 'dining_2',
+    name: 'Dining Room II',
+    icon: '🪑',
+    description: 'Knock through to the shop next door for a bigger dining room.',
+    effects: ['5 indoor tables (from 3)', 'Bigger restaurant'],
+    requiredLevel: 5,
+    cost: 1800,
+  },
+  {
+    id: 'pro_kitchen',
+    name: 'Professional Kitchen',
+    icon: '👨‍🍳',
+    description: 'Commercial burners and double-capacity machines.',
+    effects: ['Every machine cooks 2 dishes at once', 'Cooking is 20% faster'],
+    requiredLevel: 7,
+    cost: 4500,
+  },
+  {
+    id: 'dining_3',
+    name: 'Dining Room III',
+    icon: '🍽️',
+    description: 'A full brasserie floor with room for big groups.',
+    effects: ['8 indoor tables', 'Bigger restaurant'],
+    requiredLevel: 10,
+    cost: 7000,
+    requires: 'dining_2',
+  },
+  {
+    id: 'dining_4',
+    name: 'Fine Dining Hall',
+    icon: '🥂',
+    description: 'An elegant hall with extra booths for premium guests.',
+    effects: ['10 indoor tables', 'Extra booth seating'],
+    requiredLevel: 20,
+    cost: 28000,
+    requires: 'dining_3',
+  },
+  {
+    id: 'dining_5',
+    name: 'Flagship Hall',
+    icon: '🏛️',
+    description: 'The grand flagship floor of your restaurant empire.',
+    effects: ['12 indoor tables', 'The biggest restaurant'],
+    requiredLevel: 35,
+    cost: 95000,
+    requires: 'dining_4',
+  },
+];
+
+export function getExpansion(id: ExpansionId): ExpansionDef {
+  return EXPANSIONS.find((e) => e.id === id)!;
+}
+
+/** The dining tier the player has actually built (level only makes the next one available). */
+export function getEffectiveTier(save: { restaurantLevel: number; expansions?: ExpansionId[] }): {
+  tier: 1 | 2 | 3 | 4 | 5;
+  title: string;
+  tableCount: number;
+} {
+  const owned = save.expansions ?? [];
+  const built: 1 | 2 | 3 | 4 | 5 = owned.includes('dining_5')
+    ? 5
+    : owned.includes('dining_4')
+      ? 4
+      : owned.includes('dining_3')
+        ? 3
+        : owned.includes('dining_2')
+          ? 2
+          : 1;
+  const levelTier = getRestaurantTier(save.restaurantLevel).tier;
+  const tier = Math.min(built, levelTier) as 1 | 2 | 3 | 4 | 5;
+  return { tier, ...TIER_INFO[tier] };
+}
+
+/** Why an expansion can't be bought yet, or null if it can. */
+export function getExpansionBlocker(
+  save: { restaurantLevel: number; restaurantCash: number; expansions?: ExpansionId[] },
+  id: ExpansionId
+): 'owned' | 'level' | 'requires' | 'cash' | null {
+  const def = getExpansion(id);
+  const owned = save.expansions ?? [];
+  if (owned.includes(id)) return 'owned';
+  if (save.restaurantLevel < def.requiredLevel) return 'level';
+  if (def.requires && !owned.includes(def.requires)) return 'requires';
+  if (save.restaurantCash < def.cost) return 'cash';
+  return null;
+}
+
+/** Dining expansions a save already "has" from the old automatic growth (so nobody's restaurant shrinks). */
+export function getLegacyDiningExpansions(restaurantLevel: number): ExpansionId[] {
+  const tier = getRestaurantTier(restaurantLevel).tier;
+  const out: ExpansionId[] = [];
+  if (tier >= 2) out.push('dining_2');
+  if (tier >= 3) out.push('dining_3');
+  if (tier >= 4) out.push('dining_4');
+  if (tier >= 5) out.push('dining_5');
+  return out;
+}
+
 export function getXpForNextLevel(level: number): number {
   return Math.round(100 * Math.pow(1.22, level - 1));
 }
@@ -1823,6 +1953,7 @@ export function createInitialSaveState(): SaveState {
     graphicsQuality: 'high',
     hapticsEnabled: true,
     joystickSide: 'left',
+    expansions: [],
     recipeMastery: {},
     dailyChallenges: { date: null, items: [], bonusClaimed: false },
     totalStars: 0,

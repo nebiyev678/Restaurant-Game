@@ -108,7 +108,11 @@ import {
   getEquipmentUpgradeCost,
   getFranchiseIncomePerMinute,
   getLocalDateKey,
-  getRestaurantTier,
+  EXPANSIONS,
+  getEffectiveTier,
+  getExpansion,
+  getExpansionBlocker,
+  getLegacyDiningExpansions,
   getStaffTrainingCost,
   getStaffXpForNextLevel,
   getTotalDailyPayroll,
@@ -119,6 +123,7 @@ import {
 import {
   AlbumCardDef,
   CuisineId,
+  ExpansionId,
   CafeThemeId,
   CustomerOrder,
   DayReport,
@@ -203,6 +208,10 @@ function loadSavedState(): { state: SaveState; hasExisting: boolean } {
               ? (parsed.graphicsQuality as SaveState['graphicsQuality'])
               : base.graphicsQuality,
         joystickSide: parsed.joystickSide === 'right' ? 'right' : 'left',
+        // Expansions: older saves keep the dining room size they already grew into
+        expansions: Array.isArray(parsed.expansions)
+          ? parsed.expansions.filter((id) => EXPANSIONS.some((e) => e.id === id))
+          : getLegacyDiningExpansions(parsed.restaurantLevel ?? 1),
         hapticsEnabled:
           typeof parsed.hapticsEnabled === 'boolean' ? parsed.hapticsEnabled : base.hapticsEnabled,
         recipeMastery: { ...(parsed.recipeMastery ?? {}) },
@@ -442,8 +451,13 @@ export default function App() {
           if (leveledUp) {
             sound.playLevelUp();
             haptic(HAPTIC.levelUp);
-            const tier = getRestaurantTier(nextLevel);
-            showToast(`Restaurant Level ${nextLevel}!`, `${tier.title} · ${tier.tableCount} Tables`);
+            const unlocked = EXPANSIONS.filter((e) => e.requiredLevel === nextLevel);
+            showToast(
+              `Restaurant Level ${nextLevel}!`,
+              unlocked.length > 0
+                ? `New expansion available: ${unlocked.map((e) => e.name).join(', ')}`
+                : `${getEffectiveTier({ ...prev, restaurantLevel: nextLevel }).tableCount} tables · keep growing!`
+            );
           }
           const nextTut = prev.tutorialStep === 1 ? 2 : prev.tutorialStep;
           return {
@@ -507,14 +521,14 @@ export default function App() {
         }));
       },
       onCookRequested: (station, suggestedOrder) => {
-        if (engineRef.current?.isStationReady(station)) {
-          haptic(HAPTIC.tap);
-          showToast('Your hands are full', `Serve or put down your dish, then take the one on the ${STATION_INFO[station].short}.`);
-          return;
-        }
+        // Every slot on the machine is in use (1, or 2 with the Professional Kitchen)
         if (engineRef.current?.isStationBusy(station)) {
           haptic(HAPTIC.tap);
-          showToast(`${STATION_INFO[station].short} is busy`, 'Wait a few seconds for the dish to finish.');
+          if (engineRef.current.isStationReady(station)) {
+            showToast('Your hands are full', `Serve or put down your dish, then take the one on the ${STATION_INFO[station].short}.`);
+          } else {
+            showToast(`${STATION_INFO[station].short} is busy`, 'Wait a few seconds for the dish to finish.');
+          }
           return;
         }
         sound.playClick();
@@ -804,6 +818,31 @@ export default function App() {
     const cs = saveRef.current;
     window.setTimeout(() => albumGrantRef.current(rollAlbumCards(3, cs.activeCuisine, cs.ownedRestaurants, Math.random, { minRarity: 'rare' })), 1000);
   }, [commitSave, showToast]);
+
+  // --- Restaurant expansions ---
+  const handleBuyExpansion = useCallback(
+    (id: ExpansionId) => {
+      const s = saveRef.current;
+      const blocker = getExpansionBlocker(s, id);
+      const def = getExpansion(id);
+      if (blocker) {
+        haptic(HAPTIC.tap);
+        if (blocker === 'cash') showToast('Not enough restaurant cash', `${def.name} costs $${def.cost.toLocaleString()}.`);
+        return;
+      }
+      commitSave((prev) => ({
+        ...prev,
+        restaurantCash: prev.restaurantCash - def.cost,
+        expansions: [...(prev.expansions ?? []), id],
+      }));
+      sound.playLevelUp();
+      haptic(HAPTIC.levelUp);
+      setDrawerTab('none');
+      window.setTimeout(() => engineRef.current?.celebrateExpansion(), 250);
+      showToast(`${def.icon} ${def.name} is open!`, def.effects[0]);
+    },
+    [commitSave, showToast]
+  );
 
   // --- Guided beginner tutorial ---
   const [showHowTo, setShowHowTo] = useState(false);
@@ -2495,6 +2534,7 @@ export default function App() {
         }}
         onReplayTutorial={replayTutorial}
         onSetJoystickSide={(side) => commitSave((p) => ({ ...p, joystickSide: side }))}
+        onBuyExpansion={handleBuyExpansion}
         onOpenGrandOpening={() => {
           sound.playClick();
           setShowGrandOpening(true);

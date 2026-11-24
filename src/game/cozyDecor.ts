@@ -238,3 +238,125 @@ export function createVeggieCrateShelf(woodColor: string): THREE.Group {
   });
   return g;
 }
+
+// ---------------------------------------------------------------------------
+// Expansion props
+// ---------------------------------------------------------------------------
+
+/** Hanging "TAKEAWAY" lightbox sign (faces +z). */
+export function createTakeawaySign(glows: GlowMat[]): THREE.Group {
+  const g = new THREE.Group();
+  const c = document.createElement('canvas');
+  c.width = 512;
+  c.height = 160;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#7c2d12';
+  ctx.fillRect(0, 0, 512, 160);
+  ctx.strokeStyle = '#fbbf24';
+  ctx.lineWidth = 10;
+  ctx.strokeRect(8, 8, 496, 144);
+  ctx.fillStyle = '#fff7ed';
+  ctx.font = 'bold 64px "Trebuchet MS", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('🥡 TAKEAWAY', 256, 84);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.56, 0.08), new THREE.MeshStandardMaterial({ color: '#3f2a1c', roughness: 0.6 }));
+  const face = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.62, 0.5),
+    new THREE.MeshStandardMaterial({ map: tex, emissive: '#ffffff', emissiveMap: tex, emissiveIntensity: 0.35, roughness: 0.5 })
+  );
+  face.position.z = 0.045;
+  const back = face.clone();
+  back.rotation.y = Math.PI;
+  back.position.z = -0.045;
+  g.add(frame, face, back);
+  for (const x of [-0.6, 0.6]) {
+    const chain = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.5, 4), new THREE.MeshStandardMaterial({ color: '#27272a' }));
+    chain.position.set(x, 0.53, 0);
+    g.add(chain);
+  }
+  const halo = createGlowSprite('#fbbf24', 1.9, 0.25, glows);
+  halo.position.z = 0.2;
+  g.add(halo);
+  return g;
+}
+
+/** Stack of brown paper takeaway bags. */
+export function createBagStack(): THREE.Group {
+  const g = new THREE.Group();
+  const paper = new THREE.MeshStandardMaterial({ color: '#c9a36b', roughness: 0.9 });
+  const label = new THREE.MeshStandardMaterial({ color: '#b91c1c', roughness: 0.6 });
+  [[0, 0, 0], [0.24, 0, 0.04], [0.12, 0, -0.16]].forEach(([x, , z], i) => {
+    const bag = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.26 + (i % 2) * 0.04, 0.13), paper);
+    bag.position.set(x, 0.13, z);
+    bag.rotation.y = i * 0.4;
+    bag.castShadow = true;
+    const sticker = new THREE.Mesh(new THREE.CircleGeometry(0.035, 12), label);
+    sticker.position.set(x, 0.15, z + 0.066);
+    sticker.rotation.y = i * 0.4;
+    g.add(bag, sticker);
+  });
+  return g;
+}
+
+/** Numbered floor spots showing where takeaway guests queue. */
+export function createQueueMarkers(xs: readonly number[]): THREE.Group {
+  const g = new THREE.Group();
+  xs.forEach((x, i) => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const ctx = c.getContext('2d')!;
+    ctx.fillStyle = 'rgba(180,83,9,0.9)';
+    ctx.beginPath();
+    ctx.arc(64, 64, 58, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#fde68a';
+    ctx.lineWidth = 8;
+    ctx.stroke();
+    ctx.fillStyle = '#fff7ed';
+    ctx.font = 'bold 64px "Trebuchet MS", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(i + 1), 64, 68);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const spot = new THREE.Mesh(
+      new THREE.CircleGeometry(0.3, 24),
+      new THREE.MeshStandardMaterial({ map: tex, transparent: true, roughness: 0.8, depthWrite: false })
+    );
+    spot.rotation.x = -Math.PI / 2;
+    spot.position.set(x, 0.122, 0);
+    g.add(spot);
+  });
+  return g;
+}
+
+/** Chrome heat-lamp bar with two glowing lamps (Professional Kitchen, over the pass). */
+export function createHeatLampBar(length: number, glows: GlowMat[], bulbs: THREE.MeshStandardMaterial[]): THREE.Group {
+  const g = new THREE.Group();
+  const chrome = new THREE.MeshStandardMaterial({ color: '#e2e8f0', metalness: 0.9, roughness: 0.2 });
+  const bar = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.08, length), chrome);
+  g.add(bar);
+  for (const z of [-length / 2 + 0.05, length / 2 - 0.05]) {
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.7, 6), chrome);
+    rod.position.set(0, 0.38, z);
+    g.add(rod);
+  }
+  for (const z of [-length / 4, length / 4]) {
+    const shade = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.18, 14, 1, true), chrome);
+    (shade.material as THREE.MeshStandardMaterial).side = THREE.DoubleSide;
+    shade.position.set(0, -0.12, z);
+    const bulbMat = new THREE.MeshStandardMaterial({ color: '#ff7a1a', emissive: '#ff5a00', emissiveIntensity: 1.3 });
+    bulbs.push(bulbMat);
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), bulbMat);
+    bulb.position.set(0, -0.17, z);
+    const glow = createGlowSprite('#ff7a1a', 0.7, 0.55, glows);
+    glow.position.set(0, -0.25, z);
+    const pool = createLightPool('#ff8a3d', 0.45, 0.35, glows);
+    pool.position.set(0, -1.38, z);
+    g.add(shade, bulb, glow, pool);
+  }
+  return g;
+}

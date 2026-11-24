@@ -13,6 +13,7 @@ import {
   MapPin,
   Music,
   Palette,
+  Hammer,
   Shirt,
   ShoppingBag,
   Sparkles,
@@ -48,7 +49,10 @@ import {
   VEHICLE_CATALOG,
   getEquipmentUpgradeCost,
   getPrestigeTipBonus,
-  getRestaurantTier,
+  EXPANSIONS,
+  getEffectiveTier,
+  getExpansion,
+  getExpansionBlocker,
   getStaffDailySalary,
   getStaffTrainingCost,
   getStaffXpForNextLevel,
@@ -59,6 +63,7 @@ import {
   CafeThemeId,
   DrawerTab,
   EquipmentId,
+  ExpansionId,
   RecipeId,
   SaveState,
   SpecialtyLineId,
@@ -102,6 +107,7 @@ interface ManagementDrawersProps {
   onOpenHowToPlay: () => void;
   onReplayTutorial: () => void;
   onSetJoystickSide: (side: 'left' | 'right') => void;
+  onBuyExpansion: (id: ExpansionId) => void;
 }
 
 export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
@@ -141,8 +147,9 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
   onOpenHowToPlay,
   onReplayTutorial,
   onSetJoystickSide,
+  onBuyExpansion,
 }) => {
-  const [restaurantSub, setRestaurantSub] = useState<'equipment' | 'themes'>('equipment');
+  const [restaurantSub, setRestaurantSub] = useState<'equipment' | 'themes' | 'expansions'>('equipment');
   const [lifestyleSub, setLifestyleSub] = useState<'clothing' | 'cars' | 'housing'>('clothing');
   const [citySub, setCitySub] = useState<'travel' | 'bank' | 'market' | 'franchises'>('travel');
   // Wardrobe try-on (tap a thumbnail to see it on your chef before buying)
@@ -153,7 +160,7 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
 
   useEffect(() => {
     if (activeTab === 'restaurant' && initialSubTab && ['equipment', 'themes'].includes(initialSubTab)) {
-      setRestaurantSub(initialSubTab as 'equipment' | 'themes');
+      setRestaurantSub(initialSubTab as 'equipment' | 'themes' | 'expansions');
     }
     if (activeTab === 'lifestyle' && initialSubTab && ['clothing', 'cars', 'housing'].includes(initialSubTab)) {
       setLifestyleSub(initialSubTab as 'clothing' | 'cars' | 'housing');
@@ -172,7 +179,8 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
 
   if (activeTab === 'none') return null;
 
-  const tierInfo = getRestaurantTier(save.restaurantLevel);
+  const tierInfo = getEffectiveTier(save);
+  const affordableExpansions = EXPANSIONS.filter((e) => getExpansionBlocker(save, e.id) === null).length;
   const nextXp = getXpForNextLevel(save.restaurantLevel);
 
   const getMetricValue = (metric: string): number => {
@@ -259,7 +267,21 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                   }`}
                 >
                   <Wrench className="w-3.5 h-3.5" />
-                  <span>Equipment &amp; Growth</span>
+                  <span>Equipment</span>
+                </button>
+                <button
+                  onClick={() => setRestaurantSub('expansions')}
+                  className={`relative flex-1 py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                    restaurantSub === 'expansions' ? 'bg-amber-500 text-slate-950' : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  <Hammer className="w-3.5 h-3.5" />
+                  <span>Expansions</span>
+                  {affordableExpansions > 0 && restaurantSub !== 'expansions' && (
+                    <span className="absolute -top-1.5 -right-1 min-w-4 h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-extrabold flex items-center justify-center">
+                      {affordableExpansions}
+                    </span>
+                  )}
                 </button>
                 <button
                   onClick={() => setRestaurantSub('themes')}
@@ -270,11 +292,13 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                   }`}
                 >
                   <Palette className="w-3.5 h-3.5" />
-                  <span>Cafe Style Themes</span>
+                  <span>Styles</span>
                 </button>
               </div>
 
-              {restaurantSub === 'equipment' ? (
+              {restaurantSub === 'expansions' ? (
+                <ExpansionsPanel save={save} onBuy={onBuyExpansion} />
+              ) : restaurantSub === 'equipment' ? (
                 <>
                   <div className="rounded-xl bg-slate-900 border border-slate-800 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
@@ -305,9 +329,11 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                         <div
                           key={m.lv}
                           className={`py-1.5 px-1 rounded-lg border ${
-                            save.restaurantLevel >= m.lv
+                            tierInfo.tier >= [1, 5, 10, 20, 35].indexOf(m.lv) + 1
                               ? 'bg-emerald-950/60 border-emerald-600/50 text-emerald-300 font-semibold'
-                              : 'bg-slate-950 border-slate-800 text-slate-500'
+                              : save.restaurantLevel >= m.lv
+                                ? 'bg-amber-950/40 border-amber-600/50 text-amber-300'
+                                : 'bg-slate-950 border-slate-800 text-slate-500'
                           }`}
                         >
                           Lv {m.lv} · {m.label}
@@ -1721,6 +1747,83 @@ const RestaurantChainCard: React.FC<{ save: SaveState; onOpenGrandOpening: () =>
       ) : (
         <p className="mt-3 text-[11px] text-emerald-300">You own the whole chain. Keep collecting album cards!</p>
       )}
+    </div>
+  );
+};
+
+
+/** Expansion cards: what each one adds, what it needs, and a buy button. */
+const ExpansionsPanel: React.FC<{ save: SaveState; onBuy: (id: ExpansionId) => void }> = ({ save, onBuy }) => {
+  const owned = save.expansions ?? [];
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-slate-400">
+        Grow your restaurant piece by piece. Reaching a level makes an expansion available; buy it with restaurant cash.
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {EXPANSIONS.map((e) => {
+          const blocker = getExpansionBlocker(save, e.id);
+          const isOwned = owned.includes(e.id);
+          const needs = e.requires ? getExpansion(e.requires) : null;
+          return (
+            <div
+              key={e.id}
+              className={`rounded-xl border p-3.5 flex flex-col gap-2 ${
+                isOwned
+                  ? 'bg-emerald-950/30 border-emerald-600/40'
+                  : blocker === null
+                    ? 'bg-amber-950/20 border-amber-500/60'
+                    : 'bg-slate-900 border-slate-800'
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <div
+                  className={`shrink-0 w-12 h-12 rounded-xl flex items-center justify-center text-2xl border ${
+                    isOwned ? 'bg-emerald-500/15 border-emerald-500/40' : 'bg-slate-950 border-slate-700'
+                  } ${blocker === 'level' ? 'grayscale opacity-60' : ''}`}
+                  aria-hidden
+                >
+                  {e.icon}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="font-display font-bold text-white text-sm leading-tight">{e.name}</p>
+                  <p className="text-[11px] text-slate-400 leading-snug mt-0.5">{e.description}</p>
+                </div>
+              </div>
+              <ul className="space-y-0.5">
+                {e.effects.map((fx) => (
+                  <li key={fx} className="flex gap-1.5 text-[11px] text-slate-200">
+                    <span className="text-emerald-400">+</span>
+                    {fx}
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-auto pt-1">
+                {isOwned ? (
+                  <div className="w-full py-2 rounded-lg bg-emerald-600/20 text-emerald-300 text-xs font-bold text-center">Built ✓</div>
+                ) : blocker === 'level' ? (
+                  <div className="w-full py-2 rounded-lg bg-slate-800 text-slate-400 text-xs font-bold text-center">
+                    🔒 Restaurant level {e.requiredLevel} · ${e.cost.toLocaleString()}
+                  </div>
+                ) : blocker === 'requires' && needs ? (
+                  <div className="w-full py-2 rounded-lg bg-slate-800 text-slate-400 text-xs font-bold text-center">
+                    Build {needs.name} first
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => onBuy(e.id)}
+                    className={`w-full py-2 rounded-lg text-xs font-extrabold cursor-pointer ${
+                      blocker === null ? 'bg-amber-500 hover:bg-amber-400 text-slate-950' : 'bg-slate-800 text-slate-400'
+                    }`}
+                  >
+                    {blocker === null ? `Build for $${e.cost.toLocaleString()}` : `Need $${e.cost.toLocaleString()}`}
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 };
