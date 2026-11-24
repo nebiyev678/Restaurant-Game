@@ -99,6 +99,8 @@ interface ManagementDrawersProps {
   onResetSave: () => void;
   onAdvanceTimeOfDay: () => void;
   onOpenGrandOpening: () => void;
+  onOpenHowToPlay: () => void;
+  onReplayTutorial: () => void;
 }
 
 export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
@@ -135,6 +137,8 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
   onResetSave,
   onAdvanceTimeOfDay,
   onOpenGrandOpening,
+  onOpenHowToPlay,
+  onReplayTutorial,
 }) => {
   const [restaurantSub, setRestaurantSub] = useState<'equipment' | 'themes'>('equipment');
   const [lifestyleSub, setLifestyleSub] = useState<'clothing' | 'cars' | 'housing'>('clothing');
@@ -1478,6 +1482,26 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
           {/* SETTINGS */}
           {activeTab === 'settings' && (
             <div className="space-y-3">
+              <div className="rounded-xl bg-amber-500/10 border border-amber-500/40 p-4 flex items-center justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-sm text-white">New to the game?</p>
+                  <p className="text-xs text-slate-300">Machines, serving, money and more, explained step by step</p>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2 shrink-0">
+                  <button
+                    onClick={onOpenHowToPlay}
+                    className="px-4 py-2 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-extrabold cursor-pointer"
+                  >
+                    How to play
+                  </button>
+                  <button
+                    onClick={onReplayTutorial}
+                    className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold cursor-pointer"
+                  >
+                    Replay tutorial
+                  </button>
+                </div>
+              </div>
               <div className="rounded-xl bg-slate-900 border border-slate-800 p-4 flex items-center justify-between">
                 <div>
                   <p className="font-semibold text-sm text-white">Sound Effects</p>
