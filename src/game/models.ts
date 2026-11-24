@@ -3823,24 +3823,20 @@ export function createPassThroughCounterMesh(theme?: CafeThemeDef): THREE.Group 
   frontGlass.position.set(0, 1.14, 0.25);
   g.add(topGlass, frontGlass);
 
-  // Display Burgers, Fries Cup, Mustard Bottle & Stacked White Plates inside Case
-  for (const bx of [-0.72, -0.22]) {
-    const burger = createDishMesh('burger');
-    burger.scale.setScalar(0.85);
-    burger.position.set(bx, 0.93, 0.02);
-    g.add(burger);
-  }
-  const fries = createDishMesh('fries');
-  fries.scale.setScalar(0.82);
-  fries.position.set(0.28, 0.93, 0.02);
+  // Condiments & stacked plates only: no display food, so it never looks like dishes collect here
   const mustard = new THREE.Mesh(
     new THREE.CylinderGeometry(0.045, 0.05, 0.2, 10),
     new THREE.MeshStandardMaterial({ color: '#facc15', roughness: 0.35 })
   );
   mustard.position.set(0.58, 1.03, 0.04);
+  const ketchup = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.045, 0.05, 0.2, 10),
+    new THREE.MeshStandardMaterial({ color: '#dc2626', roughness: 0.35 })
+  );
+  ketchup.position.set(0.44, 1.03, 0.04);
   const plates = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.15, 0.16, 14), marbleMat);
   plates.position.set(1.02, 1.0, 0.02);
-  g.add(fries, mustard, plates);
+  g.add(mustard, ketchup, plates);
 
   return g;
 }
