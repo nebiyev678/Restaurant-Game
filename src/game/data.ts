@@ -1999,3 +1999,10 @@ export function createInitialSaveState(): SaveState {
     album: createEmptyAlbum(),
   };
 }
+
+/** Dish quality as stars: 1 = good, 2 = great (nice timing), 3 = perfect (plus the "Perfect!" tap). */
+export function qualityStars(quality: number): 1 | 2 | 3 {
+  if (quality >= 1.27) return 3;
+  if (quality >= 1.1) return 2;
+  return 1;
+}

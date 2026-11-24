@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Check, ChefHat, Flame, Lock, Sparkles, X } from 'lucide-react';
 import { DAILY_SPECIAL_BONUS, RECIPES, SPECIALTY_LINES } from '../game/data';
 import { sound } from '../game/audio';
+import { getCookSteps } from '../game/foodModels';
 import { CustomerOrder, RecipeId, SpecialtyLineId, StationType } from '../game/types';
 
 interface CookingMiniGameProps {
@@ -110,7 +111,8 @@ export const CookingMiniGame: React.FC<CookingMiniGameProps> = ({
       } else {
         sound.playSizzle();
       }
-      const bonus = inSweet ? 1.25 : 1.0;
+      // Good timing = 2 stars; the optional "Perfect!" tap on the machine adds the third
+      const bonus = inSweet ? 1.15 : 1.0;
       setQualityBonus(bonus);
       setTimingResult(inSweet ? 'perfect' : 'good');
       setStepIndex(2);
@@ -291,14 +293,27 @@ export const CookingMiniGame: React.FC<CookingMiniGameProps> = ({
                 </span>
               </div>
 
-              {/* Recipe steps as one short line (cooking is a single tap) */}
-              <p className="mb-2 text-[11px] text-slate-400 truncate">{def.steps.join(' → ')}</p>
+              {/* The steps you will watch on the machine */}
+              <ol className="mb-2 flex flex-wrap items-center gap-1 text-[10px] text-slate-300" aria-label="Cooking steps">
+                {getCookSteps(selectedRecipe).map((st, i) => (
+                  <li key={st} className="flex items-center gap-1 rounded-full bg-slate-950 border border-slate-800 pl-0.5 pr-1.5 py-0.5">
+                    <span className="w-3.5 h-3.5 rounded-full bg-amber-500 text-slate-950 font-extrabold flex items-center justify-center text-[9px]">
+                      {i + 1}
+                    </span>
+                    {st}
+                  </li>
+                ))}
+              </ol>
+              <p className="mb-2 text-[10px] text-slate-400">
+                ★ Good · <span className="text-amber-300">★★</span> tap in the green ·{' '}
+                <span className="text-amber-300">★★★</span> also tap <b className="text-amber-300">TAP!</b> on the machine when it glows (optional)
+              </p>
 
               {/* Step 1 Interactive Heat / Sizzle Timing Bar */}
               {stepIndex === 1 && (
                 <div className="mb-3">
                   <div className="flex justify-between text-xs text-slate-300 mb-1">
-                    <span>Tap in the green for a Perfect dish (+25%)</span>
+                    <span>Tap in the green for ★★ (+15%)</span>
                     <span className="font-mono-num text-amber-400">{Math.round(gaugePos)}%</span>
                   </div>
                   <div
@@ -331,8 +346,8 @@ export const CookingMiniGame: React.FC<CookingMiniGameProps> = ({
                   <Sparkles className={`w-4 h-4 ${timingResult === 'perfect' ? 'text-amber-400' : 'text-emerald-400'}`} />
                   <span>
                     {timingResult === 'perfect'
-                      ? 'Perfect Finish! +25% Dish Value & Bonus Tips unlocked.'
-                      : 'Crafted nicely! Ready to plate & serve.'}
+                      ? '★★ Great timing! Tap TAP! on the machine when it glows for ★★★.'
+                      : '★ Cooking! Tap TAP! on the machine when it glows for a bonus star.'}
                   </span>
                 </div>
               )}
@@ -356,8 +371,8 @@ export const CookingMiniGame: React.FC<CookingMiniGameProps> = ({
                       : stepIndex === 1
                         ? 'Tap to Cook!'
                         : timingResult === 'perfect'
-                          ? 'Perfect! Plating…'
-                          : 'Plating…'}
+                          ? '★★ Great! Cooking…'
+                          : 'Cooking…'}
                 </button>
 
                 <button

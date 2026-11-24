@@ -124,6 +124,7 @@ import {
   getXpForNextLevel,
   type ChallengeEvent,
   getEffectiveTheme,
+  qualityStars,
 } from './game/data';
 import {
   AlbumCardDef,
@@ -137,6 +138,7 @@ import {
   EquipmentId,
   FloatingPopup,
   GameScreen,
+  ProjectedBubble,
   RecipeId,
   SaveState,
   SpecialtyLineId,
@@ -552,12 +554,17 @@ export default function App() {
         sound.playBell();
         haptic(HAPTIC.success);
         const name = RECIPES[recipeId].name;
+        const stars = '★'.repeat(qualityStars(qualityBonus));
         pushPopup(
           collected
-            ? `${qualityBonus > 1 ? 'Perfect ' : ''}${name} ready! Serve it`
-            : `${qualityBonus > 1 ? 'Perfect ' : ''}${name} ready! Collect it at the ${STATION_INFO[station].short}`,
+            ? `${stars} ${name} ready! Serve it`
+            : `${stars} ${name} ready! Collect it at the ${STATION_INFO[station].short}`,
           'amber'
         );
+      },
+      onCookPerfect: (recipeId, qualityBonus) => {
+        haptic(HAPTIC.success);
+        pushPopup(`Perfect! ${'★'.repeat(qualityStars(qualityBonus))} ${RECIPES[recipeId].name}`, 'amber');
       },
       onShopRequested: (tab, subTab) => {
         // Shops around town open once their menu is unlocked
@@ -1335,7 +1342,7 @@ export default function App() {
       },
     }));
     pushPopup(
-      qualityBonus > 1 ? `Perfect timing! Cooking…` : `Cooking ${RECIPES[recipeId].name}…`,
+      qualityBonus > 1 ? `★★ Great timing! Cooking…` : `Cooking ${RECIPES[recipeId].name}…`,
       'amber'
     );
   };
@@ -1696,19 +1703,13 @@ export default function App() {
                   {b.cookReady && b.cookingRecipeId && (
                     <span className="absolute left-1/2 top-full mt-1 -translate-x-1/2 flex items-center gap-1 rounded-full bg-amber-400 border border-amber-100 pl-0.5 pr-2 py-0.5 shadow-lg animate-pulse">
                       <PreviewThumb kind="recipe" id={b.cookingRecipeId} alt={RECIPES[b.cookingRecipeId].name} className="w-4 h-4 rounded-full" />
-                      <span className={`font-extrabold text-slate-950 ${compact ? 'text-[9px]' : 'text-[10px]'}`}>Take!</span>
+                      <span className={`font-extrabold text-slate-950 whitespace-nowrap ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
+                        Take! <QualityStars stars={b.cookStars ?? 1} dark />
+                      </span>
                     </span>
                   )}
                   {!b.cookReady && b.cookProgress !== undefined && b.cookingRecipeId && (
-                    <span className="absolute left-1/2 top-full mt-1 -translate-x-1/2 flex items-center gap-1 rounded-full bg-slate-950/90 border border-amber-400/70 pl-0.5 pr-1.5 py-0.5">
-                      <PreviewThumb kind="recipe" id={b.cookingRecipeId} alt={RECIPES[b.cookingRecipeId].name} className="w-4 h-4 rounded-full" />
-                      <span className="block w-12 h-1.5 rounded-full bg-slate-800 overflow-hidden">
-                        <span
-                          className="block h-full rounded-full bg-amber-400 transition-[width] duration-100"
-                          style={{ width: `${Math.round(b.cookProgress * 100)}%` }}
-                        />
-                      </span>
-                    </span>
+                    <CookTimerBadge bubble={b} compact={compact} />
                   )}
                 </button>
               );
@@ -2808,5 +2809,51 @@ export default function App() {
         </div>
       )}
     </div>
+  );
+}
+
+/** Filled / empty stars for dish quality (1–3). */
+function QualityStars({ stars, dark = false }: { stars: number; dark?: boolean }) {
+  return (
+    <span className="inline-flex tracking-tighter" aria-label={`${stars} of 3 stars`}>
+      {[1, 2, 3].map((i) => (
+        <span key={i} className={i <= stars ? (dark ? 'text-slate-950' : 'text-amber-300') : dark ? 'text-slate-950/30' : 'text-slate-600'}>
+          ★
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** Under a cooking machine: timer ring around the dish, the current step, stars, and the optional "TAP!" moment. */
+function CookTimerBadge({ bubble: b, compact }: { bubble: ProjectedBubble; compact: boolean }) {
+  const pct = Math.round((b.cookProgress ?? 0) * 100);
+  const size = compact ? 'w-6 h-6' : 'w-7 h-7';
+  return (
+    <span
+      className={`absolute left-1/2 top-full mt-1 -translate-x-1/2 flex items-center gap-1.5 rounded-full border pl-0.5 pr-2 py-0.5 shadow-lg ${
+        b.cookPerfectOpen ? 'bg-amber-400 border-white animate-pulse scale-110' : 'bg-slate-950/90 border-amber-400/70'
+      }`}
+    >
+      <span
+        className={`relative ${size} rounded-full p-[2.5px] shrink-0`}
+        style={{ background: `conic-gradient(${b.cookPerfectOpen ? '#fff' : '#fbbf24'} ${pct}%, rgba(51,65,85,0.9) 0)` }}
+      >
+        <PreviewThumb kind="recipe" id={b.cookingRecipeId!} alt={RECIPES[b.cookingRecipeId!].name} className="w-full h-full rounded-full" />
+      </span>
+      {b.cookPerfectOpen ? (
+        <span className={`font-extrabold text-slate-950 whitespace-nowrap ${compact ? 'text-[10px]' : 'text-xs'}`}>TAP! ★ Perfect</span>
+      ) : (
+        <span className="flex flex-col leading-tight">
+          <span className={`font-bold text-white whitespace-nowrap max-w-[7.5rem] truncate ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
+            {b.cookStepCount ? `${(b.cookStepIndex ?? 0) + 1}/${b.cookStepCount} ` : ''}
+            {b.cookStep ?? 'Cooking'}
+          </span>
+          <span className={`flex items-center gap-1 font-mono-num text-amber-300 ${compact ? 'text-[8px]' : 'text-[9px]'}`}>
+            {b.cookSecondsLeft ?? 0}s <QualityStars stars={b.cookStars ?? 1} />
+          </span>
+        </span>
+      )}
+    </span>
   );
 }
