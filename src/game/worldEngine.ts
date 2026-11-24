@@ -5,6 +5,15 @@ import { QUALITY_PRESETS, ResolvedQuality } from './mobile';
 import { ParkingTraffic } from './parking';
 import { CUISINES, getAlbumPriceMult, getMenuRecipes, getNextCuisine } from './cuisines';
 import { createCuisineDecor } from './cuisineDecor';
+import {
+  createCozyPendant,
+  createGlowSprite,
+  createLightPool,
+  createSoupPot,
+  createVeggieCrateShelf,
+  GlowMat,
+  SteamPuffs,
+} from './cozyDecor';
 import { buildFoodStreetPlots, foodStreetColliders } from './foodStreet';
 import {
   CAFE_THEMES,
@@ -54,7 +63,6 @@ import {
   createKitchenStationMesh,
   createMenuBoardMesh,
   createPassThroughCounterMesh,
-  createPendantLampMesh,
   createPottedPlantMesh,
   createPrettyDiningFloorTextures,
   createAntiFatigueMatMesh,
@@ -363,6 +371,10 @@ export class RestaurantWorldEngine {
   private lastTier = -1;
   private lastCafeThemeId = '';
   private cuisineGlowMats: THREE.MeshStandardMaterial[] = [];
+  /** Cozy interior glows (halos, light pools) and lamp bulbs, brightened after dark. */
+  private cozyGlows: GlowMat[] = [];
+  private cozyBulbs: THREE.MeshStandardMaterial[] = [];
+  private steamPuffs: SteamPuffs[] = [];
   private foodStreetGroup = new THREE.Group();
   private lastChainKey = '';
   private lastHouseId = '';
@@ -828,7 +840,7 @@ export class RestaurantWorldEngine {
     );
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.08;
+    this.renderer.toneMappingExposure = 1.02;
     this.renderer.shadowMap.enabled = !this.isSoftwareGl;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -837,13 +849,16 @@ export class RestaurantWorldEngine {
     // Mandatory studio environment map via RoomEnvironment
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    // Softer studio reflections: more contrast, so the warm lamps carry the mood
+    this.scene.environmentIntensity = 0.6;
     pmrem.dispose();
 
     // 3-point warm/cool lighting rig
-    this.hemiLight = new THREE.HemisphereLight('#bae6fd', '#64748b', 0.72);
+    // Warm golden fill (sky) and soft brown bounce (ground) for a cozy look
+    this.hemiLight = new THREE.HemisphereLight('#ffe9cc', '#8a6a52', 0.7);
     this.scene.add(this.hemiLight);
 
-    this.sunLight = new THREE.DirectionalLight('#fff7ed', 1.45);
+    this.sunLight = new THREE.DirectionalLight('#ffe4bf', 1.45);
     this.sunLight.position.set(18, 28, 16);
     this.sunLight.castShadow = !this.isSoftwareGl;
     this.sunLight.shadow.mapSize.set(2048, 2048);
@@ -859,7 +874,7 @@ export class RestaurantWorldEngine {
     this.scene.add(this.sunLight);
     this.scene.add(this.sunLight.target);
 
-    this.rimLight = new THREE.DirectionalLight('#e0f2fe', 0.42);
+    this.rimLight = new THREE.DirectionalLight('#ffd7ad', 0.34);
     this.rimLight.position.set(-20, 14, -18);
     this.scene.add(this.rimLight);
 
@@ -1435,9 +1450,16 @@ export class RestaurantWorldEngine {
     this.restaurantGroup.add(stringLights.group);
 
     // Warm Dining Room Overhead Glow + Pendant Lamps + Wall Sconces + Hanging Ivy + Framed Burger Art
-    const diningLight = new THREE.PointLight(activeTheme.lightColor, 2.7, 19, 1.5);
+    const diningLight = new THREE.PointLight('#ffcf8f', 4.2, 20, 1.5);
     diningLight.position.set(centerX + 1.5, 3.8, 0);
     this.restaurantGroup.add(diningLight);
+    // Warm kitchen fill so the cooking line glows like the dining room
+    const kitchenLight = new THREE.PointLight('#ffe2b0', 1.6, 12, 1.6);
+    kitchenLight.position.set(minX + 2.4, 3.4, 0);
+    this.restaurantGroup.add(kitchenLight);
+    this.cozyGlows = [];
+    this.cozyBulbs = [];
+    this.steamPuffs = [];
 
     const passX = minX + 5.05;
     const passZ = 0.8;
@@ -1454,15 +1476,7 @@ export class RestaurantWorldEngine {
     this.restaurantGroup.add(bin);
     this.restaurantColliders.push({ kind: 'circle', x: this.binPos.x, z: this.binPos.z, r: 0.3 });
 
-    for (const [lx, lz] of [
-      [passX, passZ - 0.45],
-      [centerX + 2.2, -0.6],
-      [centerX + 2.2, 2.9],
-    ]) {
-      const pendant = createPendantLampMesh(activeTheme.lightColor);
-      pendant.position.set(lx, 2.68, lz);
-      this.restaurantGroup.add(pendant);
-    }
+    // (Tables get their own copper pendant lamps in the table loop.)
 
     // Stainless Range Hood above the main cooking stations (cleanly inside wall & below wall cap)
     const rangeHood = createRangeHoodMesh();
@@ -1484,6 +1498,34 @@ export class RestaurantWorldEngine {
     sconceLeft.rotation.y = Math.PI / 2;
     sconceLeft.position.set(minX + 0.32, 2.18, 4.4);
     this.restaurantGroup.add(ivyLeft, ivyBack, burgerArt, sconceBack, sconceLeft);
+    // Extra wall lamps along the dining room and a warm halo on every wall lamp
+    const sconceSpots: { x: number; z: number; rotY: number }[] = [
+      { x: centerX + 2.3, z: minZ + 0.32, rotY: 0 },
+      { x: minX + 0.32, z: 4.4, rotY: Math.PI / 2 },
+      { x: maxX - 3.8, z: minZ + 0.32, rotY: 0 },
+    ];
+    sconceSpots.slice(2).forEach((sp) => {
+      const sc = createWallSconceMesh(activeTheme.lightColor);
+      sc.rotation.y = sp.rotY;
+      sc.position.set(sp.x, 2.18, sp.z);
+      this.restaurantGroup.add(sc);
+    });
+    for (const sp of sconceSpots) {
+      const halo = createGlowSprite(activeTheme.lightColor, 1.0, 0.45, this.cozyGlows);
+      const off = 0.17;
+      halo.position.set(sp.x + Math.sin(sp.rotY) * off, 2.1, sp.z + Math.cos(sp.rotY) * off);
+      this.restaurantGroup.add(halo);
+      const wash = createLightPool(activeTheme.lightColor, 0.9, 0.18, this.cozyGlows);
+      wash.rotation.set(0, sp.rotY, 0);
+      wash.position.set(sp.x + Math.sin(sp.rotY) * 0.02, 2.0, sp.z + Math.cos(sp.rotY) * 0.02);
+      this.restaurantGroup.add(wash);
+    }
+
+    // Shelf of vegetable crates on the kitchen wall
+    const crates = createVeggieCrateShelf(activeTheme.wainscotColor);
+    crates.rotation.y = Math.PI / 2;
+    crates.position.set(minX + 0.36, 2.02, 1.5);
+    this.restaurantGroup.add(crates);
 
     // Kitchen Stations flush inside left wall + Drink Bar on back wall
     const stationLayout: { type: StationType; x: number; z: number }[] = [
@@ -1516,6 +1558,18 @@ export class RestaurantWorldEngine {
       mesh.position.set(st.x, 0.1, st.z);
       mesh.rotation.y = st.type === 'bar' ? 0 : Math.PI / 2;
       this.restaurantGroup.add(mesh);
+      // Lived-in kitchen: a steaming soup pot on the oven, a cutting board on the prep counter
+      if (isActive && st.type === 'oven') {
+        const pot = createSoupPot();
+        const topY = new THREE.Box3().setFromObject(mesh).max.y;
+        pot.position.set(st.x - 0.22, topY - 0.01, st.z - 0.4);
+        this.restaurantGroup.add(pot);
+        const steam = new SteamPuffs(4, 0.8);
+        steam.group.position.set(pot.position.x, pot.position.y + 0.25, pot.position.z);
+        this.restaurantGroup.add(steam.group);
+        this.steamPuffs.push(steam);
+      }
+
 
       if (st.type === 'bar') {
         this.restaurantColliders.push({
@@ -1695,10 +1749,19 @@ export class RestaurantWorldEngine {
 
     for (let i = 0; i < Math.min(tableCount, tableCoords.length); i++) {
       const [tx, tz] = tableCoords[i];
-      const isVip = tier >= 4 && i >= tableCount - 2;
+      // Booth seating mixed in from the start (every third table), like a cozy diner
+      const isVip = (tier >= 4 && i >= tableCount - 2) || i % 3 === 1;
       const parts = createDiningTableMesh(isVip, activeTheme);
       parts.group.position.set(tx, 0.1, tz);
       this.tablesGroup.add(parts.group);
+      const pendant = createCozyPendant(
+        activeTheme.lightColor,
+        { hangY: 2.85, ceilingY: 3.3, dropTo: 0.9 },
+        this.cozyGlows,
+        this.cozyBulbs
+      );
+      pendant.position.set(tx, 0, tz);
+      this.restaurantGroup.add(pendant);
 
       // Solid colliders for table top + chairs / VIP booths
       if (isVip) {
@@ -2759,6 +2822,7 @@ export class RestaurantWorldEngine {
     this.updateCookJobs(dt);
 
     this.updateGuide(dt);
+    for (const st of this.steamPuffs) st.update(dt);
     if (this.streakCount > 0) {
       this.streakTimer -= dt;
       if (this.streakTimer <= 0) this.breakStreak();
@@ -2828,8 +2892,8 @@ export class RestaurantWorldEngine {
       this.scene.fog.color.copy(bg);
     }
 
-    this.sunLight.intensity = 0.35 + daylight * 1.18;
-    this.hemiLight.intensity = 0.38 + daylight * 0.38;
+    this.sunLight.intensity = 0.32 + daylight * 1.08;
+    this.hemiLight.intensity = 0.32 + daylight * 0.32;
 
     const lampGlow = nightFactor > 0 || sunsetFactor > 0.3 ? 1.4 : 0.25;
     this.nightTarget = nightFactor > 0 ? 1 : sunsetFactor > 0.3 ? 0.6 : 0;
@@ -2839,6 +2903,10 @@ export class RestaurantWorldEngine {
     for (const mat of this.cuisineGlowMats) {
       mat.emissiveIntensity = 0.25 + lampGlow * 0.9;
     }
+    // Interior lamps glow softly by day and warmly after dark
+    const glowBoost = 0.7 + this.nightTarget * 0.7;
+    for (const g of this.cozyGlows) g.mat.opacity = Math.min(1, g.base * glowBoost);
+    for (const b of this.cozyBulbs) b.emissiveIntensity = 1.0 + this.nightTarget * 0.9;
   }
 
   /**
