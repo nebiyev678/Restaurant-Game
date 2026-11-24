@@ -457,6 +457,8 @@ export interface SaveState {
   joystickSide: 'left' | 'right';
   /** Expansions bought for the restaurant. */
   expansions: ExpansionId[];
+  /** Menus the player has opened since they unlocked (drives the NEW badge). */
+  seenFeatures: string[];
   isMuted: boolean;
   isMusicMuted: boolean;
   dailyLogin: {
