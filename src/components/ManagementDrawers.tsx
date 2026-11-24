@@ -214,7 +214,7 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-3xl max-h-[82vh] flex flex-col rounded-t-2xl sm:rounded-2xl bg-slate-950 border border-slate-700 shadow-2xl overflow-hidden text-slate-50"
+        className="w-full max-w-3xl max-h-[82dvh] flex flex-col rounded-t-2xl sm:rounded-2xl bg-slate-950 border border-slate-700 shadow-2xl overflow-hidden text-slate-50"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

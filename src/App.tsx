@@ -136,12 +136,20 @@ import { useOnlineStatus } from './hooks/usePWAInstall';
 
 const STORAGE_KEY = 'restaurant_empire_save_v1';
 
-/** Short money for the compact phone HUD: 9,850 → $9,850 · 12,400 → $12.4K · 2,300,000 → $2.3M */
+/** Short money for the compact phone HUD: 850 → $850 · 1,574 → $1.57K · 12,400 → $12.4K · 2,300,000 → $2.3M */
 function shortMoney(n: number): string {
   const abs = Math.abs(n);
-  if (abs < 10000) return `$${Math.round(n).toLocaleString()}`;
-  if (abs < 1_000_000) return `$${(n / 1000).toFixed(abs < 100000 ? 1 : 0)}K`;
-  return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (abs < 1000) return `$${Math.round(n)}`;
+  // Drop trailing zeros only after a decimal point (1.50 → 1.5, 150 stays 150)
+  const fmt = (v: number, digits: number) => {
+    const t = v.toFixed(digits);
+    return t.includes('.') ? t.replace(/\.?0+$/, '') : t;
+  };
+  const k = abs / 1000;
+  const kDigits = k < 10 ? 2 : k < 100 ? 1 : 0;
+  if (Number(k.toFixed(kDigits)) < 1000) return `${n < 0 ? '-' : ''}$${fmt(k, kDigits)}K`;
+  const m = abs / 1_000_000;
+  return `${n < 0 ? '-' : ''}$${fmt(m, m < 10 ? 2 : 1)}M`;
 }
 
 function patienceColor(pct: number): string {
@@ -1444,7 +1452,7 @@ export default function App() {
   ];
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-slate-950">
+    <div className="relative w-screen h-dvh overflow-hidden bg-slate-950">
       {/* Dedicated Isolated 3D Canvas Container */}
       <div ref={canvasMountRef} className="absolute inset-0 w-full h-full" />
 
@@ -1695,7 +1703,7 @@ export default function App() {
               }}
             >
               <div className="flex items-center justify-between gap-1.5">
-                <div className="pointer-events-auto flex items-center gap-2.5 min-w-0 rounded-full bg-slate-950/85 border border-slate-700/70 pl-2.5 pr-1 py-1 shadow-md">
+                <div className="pointer-events-auto flex items-center gap-2 min-w-0 overflow-hidden rounded-full bg-slate-950/85 border border-slate-700/70 pl-2.5 pr-1 py-1 shadow-md">
                   <span className="flex items-center gap-1 font-mono-num text-xs font-bold text-white" aria-label="Restaurant cash">
                     <Coins className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                     {shortMoney(save.restaurantCash)}
@@ -1708,15 +1716,17 @@ export default function App() {
                     <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
                     {save.reputation.toFixed(1)}
                   </span>
+                  {cleanInfo.tone !== 'good' && (
                   <span
                     aria-label="Cleanliness"
                     className={`flex items-center gap-0.5 font-mono-num text-[11px] font-bold ${
-                      cleanInfo.tone === 'good' ? 'text-emerald-300' : cleanInfo.tone === 'ok' ? 'text-amber-300' : 'text-rose-400'
+                      cleanInfo.tone === 'ok' ? 'text-amber-300' : 'text-rose-400'
                     }`}
                   >
                     <Sparkles className="w-3 h-3" />
                     {Math.round(save.cleanliness)}%
                   </span>
+                  )}
                   <button
                     onClick={() => {
                       sound.playClick();

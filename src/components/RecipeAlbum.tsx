@@ -86,8 +86,8 @@ export const RecipeAlbum: React.FC<RecipeAlbumProps> = ({
   const cuisine = CUISINES[page];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/85 p-0 sm:p-4" role="dialog" aria-modal="true" aria-label="Recipe Album">
-      <div className="w-full sm:max-w-lg max-h-[94vh] flex flex-col rounded-t-2xl sm:rounded-2xl bg-slate-950 border border-slate-700 shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 px-2 sm:px-4" style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))', paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }} role="dialog" aria-modal="true" aria-label="Recipe Album">
+      <div className="w-full sm:max-w-lg max-h-full flex flex-col rounded-2xl bg-slate-950 border border-slate-700 shadow-2xl overflow-hidden">
         <div className="flex items-center justify-between gap-2 px-4 pt-4 pb-3 border-b border-slate-800">
           <div className="flex items-center gap-2">
             <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-400/40 flex items-center justify-center">
