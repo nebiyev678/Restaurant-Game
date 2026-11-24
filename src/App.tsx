@@ -1709,7 +1709,7 @@ export default function App() {
                   <span
                     aria-label="Cleanliness"
                     className={`flex items-center gap-0.5 font-mono-num text-[11px] font-bold ${
-                      cleanInfo.tone === 'good' ? 'text-emerald-300' : cleanInfo.tone === 'ok' ? 'text-amber-300' : 'text-rose-400'
+                      cleanInfo.tone === 'ok' ? 'text-amber-300' : 'text-rose-400'
                     }`}
                   >
                     <Sparkles className="w-3 h-3" />
