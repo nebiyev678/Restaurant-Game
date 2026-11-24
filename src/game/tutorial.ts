@@ -6,6 +6,8 @@ export const TUTORIAL_DONE = 99;
 export type GuideAdvance =
   /** Player taps the card's button. */
   | 'button'
+  /** Pick the joystick side (touch screens only; skipped with a keyboard). */
+  | 'choose_side'
   /** Walk a few steps. */
   | 'move'
   /** Button unlocks once a guest has placed an order. */
@@ -48,6 +50,18 @@ export const GUIDE_STEPS: GuideStep[] = [
     target: null,
     maxCustomers: 0,
     buttonLabel: 'Let’s cook!',
+  },
+  {
+    id: 'joystick',
+    icon: '👍',
+    title: 'Which thumb do you walk with?',
+    body: {
+      touch: 'Choose where your joystick goes. The Cook and Serve button will sit on the other side. You can change this later in Settings.',
+      desktop: '',
+    },
+    advance: 'choose_side',
+    target: null,
+    maxCustomers: 0,
   },
   {
     id: 'move',

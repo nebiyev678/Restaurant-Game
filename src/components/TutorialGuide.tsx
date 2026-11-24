@@ -11,12 +11,14 @@ interface TutorialGuideProps {
   ready: boolean;
   onNext: () => void;
   onSkip: () => void;
+  /** Joystick-side step: the player picked a side. */
+  onChooseSide?: (side: 'left' | 'right') => void;
   skipLabel?: string;
   onHowToPlay: () => void;
 }
 
 /** Step card for the guided beginner tutorial. */
-export const TutorialGuide: React.FC<TutorialGuideProps> = ({ step, isTouch, joystickSide = 'left', compact, ready, onNext, onSkip, skipLabel = 'Skip tutorial', onHowToPlay }) => {
+export const TutorialGuide: React.FC<TutorialGuideProps> = ({ step, isTouch, joystickSide = 'left', compact, ready, onNext, onSkip, onChooseSide, skipLabel = 'Skip tutorial', onHowToPlay }) => {
   const s = GUIDE_STEPS[step];
   if (!s) return null;
   const hasButton = s.advance === 'button' || s.advance === 'order';
@@ -43,6 +45,43 @@ export const TutorialGuide: React.FC<TutorialGuideProps> = ({ step, isTouch, joy
             <p className="mt-1 text-[12px] leading-snug text-slate-200">{(isTouch ? s.body.touch : s.body.desktop).replace('{side}', joystickSide)}</p>
           </div>
         </div>
+
+        {s.advance === 'choose_side' && (
+          <div className="mt-3 grid grid-cols-2 gap-2" role="radiogroup" aria-label="Joystick side">
+            {(['left', 'right'] as const).map((side) => (
+              <button
+                key={side}
+                role="radio"
+                aria-checked={joystickSide === side}
+                onClick={() => onChooseSide?.(side)}
+                className={`relative h-24 rounded-xl border-2 cursor-pointer overflow-hidden ${
+                  joystickSide === side ? 'border-amber-400 bg-amber-400/10' : 'border-slate-700 bg-slate-900'
+                }`}
+              >
+                {/* Mini phone: joystick on one side, action button on the other */}
+                <span className="absolute inset-x-3 top-2 bottom-7 rounded-lg border border-slate-600 bg-slate-800/80">
+                  <span
+                    className={`absolute bottom-1.5 w-7 h-7 rounded-full border border-white/30 bg-slate-950/40 flex items-center justify-center ${
+                      side === 'left' ? 'left-1.5' : 'right-1.5'
+                    }`}
+                  >
+                    <span className="w-3 h-3 rounded-full bg-amber-400" />
+                  </span>
+                  <span
+                    className={`absolute bottom-2 h-4 px-1.5 rounded-full bg-amber-500 text-[8px] font-extrabold text-slate-950 flex items-center ${
+                      side === 'left' ? 'right-1.5' : 'left-1.5'
+                    }`}
+                  >
+                    Cook
+                  </span>
+                </span>
+                <span className="absolute inset-x-0 bottom-1.5 text-center text-sm font-extrabold text-white">
+                  {side === 'left' ? 'Left thumb' : 'Right thumb'}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Progress dots */}
         <div className="mt-2.5 flex items-center gap-1" aria-hidden>
@@ -74,7 +113,7 @@ export const TutorialGuide: React.FC<TutorialGuideProps> = ({ step, isTouch, joy
             >
               {ready ? s.buttonLabel ?? 'Next' : s.waitingHint ?? 'Wait…'}
             </button>
-          ) : (
+          ) : s.advance === 'choose_side' ? null : (
             <span className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-200">
               <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
               {s.waitingHint}
