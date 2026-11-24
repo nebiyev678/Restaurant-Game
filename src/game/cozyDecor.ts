@@ -93,7 +93,7 @@ export function createCozyPendant(
   const halo = createGlowSprite(lightColor, 1.3, 0.6, glows);
   halo.position.y = opts.hangY - 0.14;
   const pool = createLightPool(lightColor, opts.poolRadius ?? 0.85, 0.5, glows);
-  pool.position.y = opts.dropTo + 0.012;
+  pool.position.y = opts.dropTo + 0.02;
   g.add(cord, cap, shade, shadeIn, bulb, halo, pool);
   return g;
 }
