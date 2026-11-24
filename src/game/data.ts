@@ -1810,6 +1810,7 @@ export function createInitialSaveState(): SaveState {
       tipsEarned: 0,
     },
     tutorialStep: 0,
+    guideStep: 0,
     isMuted: false,
     isMusicMuted: false,
     dailyLogin: {

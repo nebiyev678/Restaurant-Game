@@ -38,6 +38,9 @@ import {
 import { CookingMiniGame } from './components/CookingMiniGame';
 import { DailyBonusModal } from './components/DailyBonusModal';
 import { QuickGoalChip } from './components/QuickGoalChip';
+import { GuideEdgePointer, TutorialGuide } from './components/TutorialGuide';
+import { HowToPlay } from './components/HowToPlay';
+import { GUIDE_STEPS, GuideAdvance, TUTORIAL_DONE } from './game/tutorial';
 import { GrandOpeningModal } from './components/GrandOpeningModal';
 import { RecipeAlbum, NewCardsToast } from './components/RecipeAlbum';
 import {
@@ -200,6 +203,13 @@ function loadSavedState(): { state: SaveState; hasExisting: boolean } {
         recipeMastery: { ...(parsed.recipeMastery ?? {}) },
         dailyChallenges: parsed.dailyChallenges?.items ? parsed.dailyChallenges : base.dailyChallenges,
         totalStars: typeof parsed.totalStars === 'number' ? parsed.totalStars : 0,
+        // Guided tutorial: players who already know the game skip it
+        guideStep:
+          typeof parsed.guideStep === 'number'
+            ? parsed.guideStep
+            : (parsed.tutorialStep ?? 0) >= 4 || (parsed.stats?.customersServed ?? 0) > 2
+              ? TUTORIAL_DONE
+              : 0,
         ...(() => {
           const unlocked = Array.isArray(parsed.unlockedRecipes) && parsed.unlockedRecipes.length > 0
             ? parsed.unlockedRecipes
@@ -283,6 +293,7 @@ export default function App() {
     bubbles: [],
     playerPos: { x: -4, z: 2 },
     streak: { count: 0, mult: 1, timeLeft: 0 },
+    guidePointer: null,
   });
 
   const [popups, setPopups] = useState<FloatingPopup[]>([]);
@@ -296,6 +307,7 @@ export default function App() {
   // Latest-handler refs so the once-mounted engine always calls current logic
   const dayEndedRef = useRef<() => void>(() => {});
   const albumDropRef = useRef<(items: RecipeId[]) => void>(() => {});
+  const guideEventRef = useRef<(ev: GuideAdvance) => void>(() => {});
   const albumGrantRef = useRef<(cards: AlbumCardDef[]) => void>(() => {});
   const staffTaskDoneRef = useRef<(staffId: string) => void>(() => {});
 
@@ -392,6 +404,7 @@ export default function App() {
       onOrderServed: (recipeId, revenue, tip, repDelta, xpGain, _pos, info) => {
         const total = revenue + tip;
         albumDropRef.current(info.items);
+        guideEventRef.current('serve');
         haptic(HAPTIC.success);
         pushPopup(
           `${info.comboSize > 1 ? `Combo ×${info.comboSize}! ` : ''}+$${revenue}${tip > 0 ? ` (+$${tip} tip)` : ''}`,
@@ -528,6 +541,7 @@ export default function App() {
         }));
       },
       onTableCleaned: () => {
+        guideEventRef.current('clean');
         commitSave((prev) => ({
           ...prev,
           cleanliness: Math.min(100, prev.cleanliness + 6),
@@ -785,6 +799,73 @@ export default function App() {
     const cs = saveRef.current;
     window.setTimeout(() => albumGrantRef.current(rollAlbumCards(3, cs.activeCuisine, cs.ownedRestaurants, Math.random, { minRarity: 'rare' })), 1000);
   }, [commitSave, showToast]);
+
+  // --- Guided beginner tutorial ---
+  const [showHowTo, setShowHowTo] = useState(false);
+  const guideStep = save.guideStep ?? TUTORIAL_DONE;
+  const guideDone = guideStep >= GUIDE_STEPS.length;
+  const tutorialOn = !guideDone && screen === 'playing';
+  const guideDef = GUIDE_STEPS[guideStep];
+
+  const advanceGuide = useCallback(
+    (from: number) => {
+      commitSave((prev) =>
+        prev.guideStep === from
+          ? { ...prev, guideStep: from + 1 >= GUIDE_STEPS.length ? TUTORIAL_DONE : from + 1 }
+          : prev
+      );
+      sound.playClick();
+      haptic(HAPTIC.tap);
+    },
+    [commitSave]
+  );
+  guideEventRef.current = (ev: GuideAdvance) => {
+    const st = saveRef.current.guideStep;
+    const def = GUIDE_STEPS[st];
+    if (def && def.advance === ev) advanceGuide(st);
+  };
+  const skipTutorial = useCallback(() => {
+    commitSave((prev) => ({ ...prev, guideStep: TUTORIAL_DONE }));
+  }, [commitSave]);
+  const replayTutorial = useCallback(() => {
+    setShowHowTo(false);
+    setDrawerTab('none');
+    commitSave((prev) => ({ ...prev, guideStep: 0 }));
+  }, [commitSave]);
+
+  // Tell the engine where the arrow points and how many guests may come in
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    if (tutorialOn && guideDef) {
+      engine.setGuide(guideDef.target, { maxCustomers: guideDef.maxCustomers, spawnNow: guideDef.maxCustomers > 0 });
+    } else {
+      engine.setGuide(null, { maxCustomers: null });
+    }
+  }, [tutorialOn, guideStep, guideDef]);
+
+  // Steps that finish by doing something in the world
+  const moveStartRef = useRef<{ x: number; z: number } | null>(null);
+  useEffect(() => {
+    if (!tutorialOn || !guideDef) return;
+    const adv = guideDef.advance;
+    if (adv === 'move') {
+      if (!moveStartRef.current) moveStartRef.current = { ...hud.playerPos };
+      const d = Math.hypot(hud.playerPos.x - moveStartRef.current.x, hud.playerPos.z - moveStartRef.current.z);
+      if (d > 3) {
+        moveStartRef.current = null;
+        advanceGuide(guideStep);
+      }
+      return;
+    }
+    // Already cooking (or holding the dish)? Then the cook step is done
+    if (adv === 'cook' && (hud.heldRecipe || hud.bubbles.some((b) => b.kind === 'station' && b.cookProgress !== undefined))) {
+      advanceGuide(guideStep);
+    } else if (adv === 'hold' && hud.heldRecipe) {
+      advanceGuide(guideStep);
+    }
+  }, [tutorialOn, guideDef, guideStep, hud.playerPos, hud.heldRecipe, hud.bubbles, advanceGuide]);
+  const guideReady = guideDef?.advance === 'order' ? hud.activeOrders.length > 0 : true;
 
   // --- Recipe Album: cards drop from orders, chests and 3-star days ---
   const [showAlbum, setShowAlbum] = useState(false);
@@ -1158,6 +1239,7 @@ export default function App() {
       return;
     }
     haptic(qualityBonus > 1 ? HAPTIC.perfect : HAPTIC.action);
+    guideEventRef.current('cook');
     commitSave((prev) => ({
       ...prev,
       dailyChallenges:
@@ -1441,17 +1523,6 @@ export default function App() {
   const nextXp = getXpForNextLevel(save.restaurantLevel);
   const cleanInfo = getCleanlinessLabel(save.cleanliness);
   const dailyPayroll = getTotalDailyPayroll(save.staff);
-
-  const tutorialMessages = [
-    isTouch
-      ? 'Drag on the left side to walk to the glowing Grill or Fryer, then tap the Cook button.'
-      : 'Walk to the glowing Grill or Fryer and press Space / Cook to prepare a dish.',
-    isTouch
-      ? 'Wait in the machine’s circle, or come back when it shows “Take!”, then carry the dish to the table and tap Serve!'
-      : 'Wait in the machine’s circle, or come back when it shows “Take!”, then carry the dish to the customer to serve!',
-    'Open Restaurant or Staff below to upgrade equipment or hire a Chef & Waiter.',
-    'Withdraw profits in City > Bank, then buy outfits & cars in Lifestyle!',
-  ];
 
   return (
     <div className="relative w-screen h-dvh overflow-hidden bg-slate-950">
@@ -1805,21 +1876,6 @@ export default function App() {
                 </div>
               )}
 
-              {save.tutorialStep < 4 && drawerTab === 'none' && !cookModal && (
-                <div className="pointer-events-auto self-start max-w-[min(92vw,340px)] flex items-start gap-2 rounded-xl bg-slate-950/85 border border-amber-500/40 pl-2.5 pr-1 py-1.5 shadow-md">
-                  <span className="mt-px shrink-0 rounded bg-amber-500/20 px-1 text-[9px] font-extrabold text-amber-300">
-                    {save.tutorialStep + 1}/4
-                  </span>
-                  <p className="text-[11px] leading-snug text-slate-200">{tutorialMessages[save.tutorialStep]}</p>
-                  <button
-                    onClick={() => commitSave((p) => ({ ...p, tutorialStep: 5 }))}
-                    aria-label="Dismiss guide"
-                    className="shrink-0 w-6 h-6 -my-0.5 rounded-full text-slate-400 hover:text-white flex items-center justify-center cursor-pointer"
-                  >
-                    ×
-                  </button>
-                </div>
-              )}
             </div>
           )}
 
@@ -2092,10 +2148,10 @@ export default function App() {
                   </span>
                 </div>
               )}
-              {save.tutorialStep >= 4 && (
+              {guideDone && (
                 <QuickGoalChip state={save.quickGoals} special={save.dailySpecial} flash={goalFlash} compact={compact} />
               )}
-              {save.dailySpecial && save.tutorialStep >= 4 && (
+              {save.dailySpecial && guideDone && (
                 <span
                   className={`flex items-center gap-1 rounded-full bg-amber-500/90 border border-amber-200 text-slate-950 font-bold shadow ${
                     compact ? 'px-1.5 py-0.5 text-[9px]' : 'px-2 py-0.5 text-[10px]'
@@ -2140,26 +2196,6 @@ export default function App() {
             >
               <p className={`font-display font-extrabold leading-tight ${compact ? 'text-xs' : 'text-sm'}`}>{toast.title}</p>
               <p className={`font-semibold text-slate-900 ${compact ? 'text-[10px] truncate' : 'text-xs'}`}>{toast.subtitle}</p>
-            </div>
-          )}
-
-          {/* Gentle Onboarding Tutorial Tip */}
-          {!compact && save.tutorialStep < 4 && drawerTab === 'none' && !cookModal && !dayReport && (
-            <div className="fixed top-20 right-3 sm:right-5 max-w-[260px] pointer-events-auto rounded-xl bg-slate-950/92 border border-amber-500/50 p-3 shadow-xl">
-              <div className="flex items-center justify-between gap-2 mb-1">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400">
-                  Chef Guide · {save.tutorialStep + 1}/4
-                </span>
-                <button
-                  onClick={() => commitSave((p) => ({ ...p, tutorialStep: 5 }))}
-                  className="text-[11px] text-slate-400 hover:text-white cursor-pointer"
-                >
-                  Dismiss
-                </button>
-              </div>
-              <p className="text-xs text-slate-200 leading-snug">
-                {tutorialMessages[save.tutorialStep]}
-              </p>
             </div>
           )}
 
@@ -2438,6 +2474,12 @@ export default function App() {
 
       {/* Management & Lifestyle Drawers */}
       <ManagementDrawers
+        onOpenHowToPlay={() => {
+          sound.playClick();
+          setDrawerTab('none');
+          setShowHowTo(true);
+        }}
+        onReplayTutorial={replayTutorial}
         onOpenGrandOpening={() => {
           sound.playClick();
           setShowGrandOpening(true);
@@ -2504,6 +2546,23 @@ export default function App() {
         />
       )}
 
+      {tutorialOn && guideDef && drawerTab === 'none' && !cookModal && !showAlbum && !showHowTo && (
+        <TutorialGuide
+          step={guideStep}
+          isTouch={isTouch}
+          compact={compact}
+          ready={guideReady}
+          onNext={() => advanceGuide(guideStep)}
+          onSkip={guideDef.advance === 'clean' ? () => advanceGuide(guideStep) : skipTutorial}
+          skipLabel={guideDef.advance === 'clean' ? 'Skip this step' : 'Skip tutorial'}
+          onHowToPlay={() => setShowHowTo(true)}
+        />
+      )}
+      {tutorialOn && hud.guidePointer && !hud.guidePointer.onScreen && drawerTab === 'none' && !cookModal && (
+        <GuideEdgePointer x={hud.guidePointer.x} y={hud.guidePointer.y} angle={hud.guidePointer.angle} />
+      )}
+      {showHowTo && <HowToPlay isTouch={isTouch} onClose={() => setShowHowTo(false)} onReplayTutorial={replayTutorial} />}
+
       {showAlbum && (
         <RecipeAlbum
           album={save.album}
@@ -2533,7 +2592,7 @@ export default function App() {
       )}
 
       {/* Daily Login Bonus Modal */}
-      {showDailyModal && screen === 'playing' && !offlineReward && (
+      {showDailyModal && screen === 'playing' && !offlineReward && !tutorialOn && (
         <DailyBonusModal
           status={dailyStatus}
           totalDaysClaimed={save.dailyLogin.totalDaysClaimed}

@@ -188,6 +188,9 @@ interface SimParticle {
   active: boolean;
 }
 
+/** Things the beginner-tutorial arrow can point at. */
+export type GuideTargetKind = 'customer' | 'station' | 'serve' | 'dirty_table';
+
 export interface EngineCallbacks {
   onHudUpdate: (snapshot: EngineHudSnapshot) => void;
   onOrderServed: (
@@ -336,6 +339,14 @@ export class RestaurantWorldEngine {
   >();
   /** Machine the chef is walking to in order to pick up its finished dish. */
   private pendingTakeStation: StationType | null = null;
+  /** Beginner tutorial: what the bouncing arrow points at, and the calm one-guest mode. */
+  private guideTarget: GuideTargetKind | null = null;
+  private guideMaxCustomers: number | null = null;
+  private guideSpawnNow = false;
+  private guideArrow: THREE.Group | null = null;
+  private guideRing: THREE.Mesh | null = null;
+  private guideTime = 0;
+  private guidePos: THREE.Vector3 | null = null;
   private passDishKey = '';
   static readonly PASS_SLOTS = 6;
   /** Height of a kitchen machine's work surface (finished dishes sit here). */
@@ -573,6 +584,106 @@ export class RestaurantWorldEngine {
     dish.position.set(st.mx + (st.x - st.mx) * 0.22, RestaurantWorldEngine.STATION_TOP_Y, st.mz + (st.z - st.mz) * 0.22);
     this.restaurantGroup.add(dish);
     job.mesh = dish;
+  }
+
+  /**
+   * Beginner tutorial control: where the arrow points, and (while set) at most
+   * `maxCustomers` guests, with the first one sent in right away and extra patience.
+   */
+  public setGuide(target: GuideTargetKind | null, opts: { maxCustomers?: number | null; spawnNow?: boolean } = {}) {
+    this.guideTarget = target;
+    this.guideMaxCustomers = opts.maxCustomers ?? null;
+    if (opts.spawnNow) this.guideSpawnNow = true;
+    if (!target) this.guidePos = null;
+  }
+
+  private ensureGuideMeshes() {
+    if (this.guideArrow) return;
+    const gold = new THREE.MeshStandardMaterial({ color: '#facc15', emissive: '#f59e0b', emissiveIntensity: 0.8, roughness: 0.35 });
+    const arrow = new THREE.Group();
+    const head = new THREE.Mesh(new THREE.ConeGeometry(0.5, 0.85, 20), gold);
+    head.rotation.x = Math.PI;
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.75, 14), gold);
+    shaft.position.y = 0.78;
+    arrow.add(head, shaft);
+    arrow.visible = false;
+    this.scene.add(arrow);
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.85, 1.12, 40),
+      new THREE.MeshBasicMaterial({ color: '#facc15', transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.visible = false;
+    this.scene.add(ring);
+    this.guideArrow = arrow;
+    this.guideRing = ring;
+  }
+
+  /** World point (ground x/z) and arrow height for the current tutorial target. */
+  private resolveGuideTarget(): { x: number; z: number; y: number; ringX?: number; ringZ?: number } | null {
+    const t = this.guideTarget;
+    if (!t) return null;
+    if (t === 'customer' || t === 'serve') {
+      let order = this.orders[0];
+      if (t === 'serve' && this.heldRecipe) order = this.orders.find((o) => this.orderNeeds(o, this.heldRecipe!)) ?? order;
+      const c = order ? this.customers.find((cu) => cu.orderId === order.id) : this.customers[0];
+      if (!c) return null;
+      return { x: c.mesh.root.position.x, z: c.mesh.root.position.z, y: 3.5 };
+    }
+    if (t === 'station') {
+      // The machine that is cooking / holding a dish, else the one the first order needs
+      let type: StationType | undefined = [...this.cookJobs.keys()][0];
+      if (!type && this.orders[0]) type = RECIPES[this.orders[0].recipeId].station;
+      const st = type ? this.stations.find((s2) => s2.type === type) : undefined;
+      if (!st) return null;
+      return { x: st.mx, z: st.mz, y: 2.75, ringX: st.x, ringZ: st.z };
+    }
+    const dirty = this.tables.find((tb) => tb.dirty);
+    return dirty ? { x: dirty.x, z: dirty.z, y: 2.4 } : null;
+  }
+
+  private updateGuide(dt: number) {
+    const target = this.resolveGuideTarget();
+    if (!target) {
+      this.guidePos = null;
+      if (this.guideArrow) this.guideArrow.visible = false;
+      if (this.guideRing) this.guideRing.visible = false;
+      return;
+    }
+    this.ensureGuideMeshes();
+    this.guideTime += dt;
+    const bob = Math.sin(this.guideTime * 4.2) * 0.14;
+    this.guideArrow!.visible = true;
+    this.guideArrow!.position.set(target.x, target.y + bob, target.z);
+    this.guideArrow!.rotation.y += dt * 1.6;
+    const k = 0.5 + 0.5 * Math.sin(this.guideTime * 4.2);
+    this.guideRing!.visible = true;
+    this.guideRing!.position.set(target.ringX ?? target.x, 0.06, target.ringZ ?? target.z);
+    this.guideRing!.scale.setScalar(0.9 + k * 0.25);
+    (this.guideRing!.material as THREE.MeshBasicMaterial).opacity = 0.45 + k * 0.45;
+    this.guidePos = new THREE.Vector3(target.x, target.y, target.z);
+  }
+
+  /** Screen position of the tutorial target, clamped to the screen edge when it is off-screen. */
+  private projectGuidePointer(): { x: number; y: number; onScreen: boolean; angle: number } | null {
+    if (!this.guidePos) return null;
+    const w = this.renderer.domElement.clientWidth;
+    const h = this.renderer.domElement.clientHeight;
+    const v = this.guidePos.clone().project(this.camera);
+    const behind = v.z > 1;
+    let x = v.x;
+    let y = v.y;
+    if (behind) {
+      x = -x;
+      y = -y;
+    }
+    const onScreen = !behind && Math.abs(x) <= 0.9 && Math.abs(y) <= 0.85;
+    if (onScreen) return { x: ((x + 1) / 2) * w, y: ((1 - y) / 2) * h, onScreen: true, angle: 0 };
+    const angle = Math.atan2(-y, x);
+    const m = Math.max(Math.abs(x) / 0.86, Math.abs(y) / 0.8, 1e-6);
+    const ex = x / m;
+    const ey = y / m;
+    return { x: ((ex + 1) / 2) * w, y: ((1 - ey) / 2) * h, onScreen: false, angle };
   }
 
   /** True when a finished dish is waiting on this machine. */
@@ -2646,6 +2757,8 @@ export class RestaurantWorldEngine {
     this.updateParticles(dt);
 
     this.updateCookJobs(dt);
+
+    this.updateGuide(dt);
     if (this.streakCount > 0) {
       this.streakTimer -= dt;
       if (this.streakTimer <= 0) this.breakStreak();
@@ -3333,17 +3446,28 @@ export class RestaurantWorldEngine {
     const helpers = save.staff.filter((m) => m.role === 'chef' || m.role === 'waiter').length;
     // Calm pace: a new guest only arrives while the open orders are still manageable
     const openOrders = this.orders.length;
+    // Tutorial: one calm guest at a time, and the first one walks in right away
+    const guideCap = this.guideMaxCustomers;
+    if (guideCap !== null && this.guideSpawnNow && this.customers.length + this.parking.inTransitCount() === 0) {
+      this.spawnTimer = 0;
+    }
     if (
       this.spawnTimer <= 0 &&
-      this.customers.length + this.parking.inTransitCount() < maxCustomers &&
-      openOrders < getMaxOpenOrders(save.restaurantLevel, helpers)
+      this.customers.length + this.parking.inTransitCount() < (guideCap ?? maxCustomers) &&
+      openOrders < (guideCap ?? getMaxOpenOrders(save.restaurantLevel, helpers))
     ) {
+      if (guideCap !== null && this.guideSpawnNow) {
+        this.guideSpawnNow = false;
+        this.spawnTimer = getCustomerSpawnInterval(save.restaurantLevel, save.reputation, helpers);
+        this.spawnCustomer({ archetype: 'regular' });
+      } else {
       this.spawnTimer = getCustomerSpawnInterval(save.restaurantLevel, save.reputation, helpers);
       // About 4 in 10 guests drive in and use the parking lot (if a bay is free)
       const seed = Math.floor(Math.random() * 1000);
       const archetype = this.rollArchetype();
       const byCar = Math.random() < 0.4 && this.hasFreeTableOrTakeaway() && this.parking.trySpawnCar(archetype, seed);
       if (!byCar) this.spawnCustomer({ archetype, seed });
+      }
     }
 
     this.parking.update(dt, { pos: this.playerPos, inVehicle: this.inVehicle });
@@ -3644,8 +3768,8 @@ export class RestaurantWorldEngine {
       archetype: c.archetype,
       customerName: c.name,
       status: 'waiting',
-      patience: maxPat,
-      maxPatience: maxPat,
+      patience: this.guideMaxCustomers !== null ? maxPat * 3 : maxPat,
+      maxPatience: this.guideMaxCustomers !== null ? maxPat * 3 : maxPat,
       createdAt: Date.now(),
       qualityBonus: 1.0,
     };
@@ -4273,6 +4397,7 @@ export class RestaurantWorldEngine {
       nearbyPrompt: this.computeNearbyPrompt(),
       bubbles,
       playerPos: { x: this.playerPos.x, z: this.playerPos.z },
+      guidePointer: this.projectGuidePointer(),
       streak: {
         count: this.streakCount,
         mult: getStreakMult(this.streakCount),

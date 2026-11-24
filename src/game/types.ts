@@ -434,7 +434,9 @@ export interface SaveState {
     upgradesBought: number;
     tipsEarned: number;
   };
-  tutorialStep: number; // 0..4, 5 = complete
+  tutorialStep: number; // legacy 4-tip guide: 0..4, 5 = complete
+  /** Guided beginner tutorial step (see game/tutorial.ts); TUTORIAL_DONE when finished or skipped. */
+  guideStep: number;
   isMuted: boolean;
   isMusicMuted: boolean;
   dailyLogin: {
@@ -586,4 +588,6 @@ export interface EngineHudSnapshot {
   playerPos: { x: number; z: number };
   /** Serving streak: orders completed in a row, tip multiplier, and time left before it cools (0..1). */
   streak: { count: number; mult: number; timeLeft: number };
+  /** Beginner tutorial target on screen (clamped to the edge with a direction when off-screen). */
+  guidePointer: { x: number; y: number; onScreen: boolean; angle: number } | null;
 }
