@@ -530,6 +530,8 @@ export interface ProjectedBubble {
   /** Machine currently cooking: which dish and how far along (0..1). */
   cookingRecipeId?: RecipeId;
   cookProgress?: number;
+  /** The dish finished cooking and waits on the machine for the chef to take it. */
+  cookReady?: boolean;
   /** World-space point the bubble follows; the HUD re-projects it every rendered frame. */
   anchor?: { x: number; y: number; z: number };
   /** Covered machine the player hasn't unlocked yet, and the level that unlocks it. */
@@ -563,6 +565,7 @@ export interface NearbyPrompt {
     | 'open_home'
     | 'put_down'
     | 'pick_up'
+    | 'take_dish'
     | 'trash';
   stationType?: StationType;
   tableId?: number;

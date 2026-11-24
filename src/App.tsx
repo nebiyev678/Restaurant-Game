@@ -481,6 +481,11 @@ export default function App() {
         }));
       },
       onCookRequested: (station, suggestedOrder) => {
+        if (engineRef.current?.isStationReady(station)) {
+          haptic(HAPTIC.tap);
+          showToast('Your hands are full', `Serve or put down your dish, then take the one on the ${STATION_INFO[station].short}.`);
+          return;
+        }
         if (engineRef.current?.isStationBusy(station)) {
           haptic(HAPTIC.tap);
           showToast(`${STATION_INFO[station].short} is busy`, 'Wait a few seconds for the dish to finish.');
@@ -489,13 +494,13 @@ export default function App() {
         sound.playClick();
         setCookModal({ station, suggestedOrder });
       },
-      onDishReady: (recipeId, qualityBonus, toPass) => {
+      onDishReady: (recipeId, qualityBonus, station) => {
         sound.playBell();
         haptic(HAPTIC.success);
         const name = RECIPES[recipeId].name;
         pushPopup(
-          toPass ? `${name} ready on the pass` : qualityBonus > 1 ? `Perfect ${name}!` : `${name} ready!`,
-          toPass ? 'sky' : 'amber'
+          `${qualityBonus > 1 ? 'Perfect ' : ''}${name} ready! Take it from the ${STATION_INFO[station].short}`,
+          'amber'
         );
       },
       onShopRequested: (tab, subTab) => {
@@ -1139,7 +1144,7 @@ export default function App() {
     setCookModal(null);
     // The dish now cooks on its machine for a few seconds (progress shows on the machine sign)
     if (!engineRef.current?.startCookJob(recipeId, qualityBonus)) {
-      showToast(`${STATION_INFO[RECIPES[recipeId].station].short} is busy`, 'Wait for the current dish to finish.');
+      showToast(`${STATION_INFO[RECIPES[recipeId].station].short} is busy`, 'Take the finished dish off the machine first.');
       return;
     }
     haptic(qualityBonus > 1 ? HAPTIC.perfect : HAPTIC.action);
@@ -1432,8 +1437,8 @@ export default function App() {
       ? 'Drag on the left side to walk to the glowing Grill or Fryer, then tap the Cook button.'
       : 'Walk to the glowing Grill or Fryer and press Space / Cook to prepare a dish.',
     isTouch
-      ? 'Carry the dish to the customer’s table and tap Serve to earn cash + tips!'
-      : 'Carry your cooked dish to the customer table to serve and earn cash + tips!',
+      ? 'When the machine shows “Take!”, grab the dish there, carry it to the table and tap Serve!'
+      : 'When the machine shows “Take!”, grab the dish there and carry it to the customer to serve!',
     'Open Restaurant or Staff below to upgrade equipment or hire a Chef & Waiter.',
     'Withdraw profits in City > Bank, then buy outfits & cars in Lifestyle!',
   ];
@@ -1535,7 +1540,13 @@ export default function App() {
                       {pending}
                     </span>
                   )}
-                  {b.cookProgress !== undefined && b.cookingRecipeId && (
+                  {b.cookReady && b.cookingRecipeId && (
+                    <span className="absolute left-1/2 top-full mt-1 -translate-x-1/2 flex items-center gap-1 rounded-full bg-amber-400 border border-amber-100 pl-0.5 pr-2 py-0.5 shadow-lg animate-pulse">
+                      <PreviewThumb kind="recipe" id={b.cookingRecipeId} alt={RECIPES[b.cookingRecipeId].name} className="w-4 h-4 rounded-full" />
+                      <span className={`font-extrabold text-slate-950 ${compact ? 'text-[9px]' : 'text-[10px]'}`}>Take!</span>
+                    </span>
+                  )}
+                  {!b.cookReady && b.cookProgress !== undefined && b.cookingRecipeId && (
                     <span className="absolute left-1/2 top-full mt-1 -translate-x-1/2 flex items-center gap-1 rounded-full bg-slate-950/90 border border-amber-400/70 pl-0.5 pr-1.5 py-0.5">
                       <PreviewThumb kind="recipe" id={b.cookingRecipeId} alt={RECIPES[b.cookingRecipeId].name} className="w-4 h-4 rounded-full" />
                       <span className="block w-12 h-1.5 rounded-full bg-slate-800 overflow-hidden">
