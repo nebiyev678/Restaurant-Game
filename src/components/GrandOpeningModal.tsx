@@ -20,8 +20,8 @@ export const GrandOpeningModal: React.FC<GrandOpeningModalProps> = ({ next, curr
   const oldIncome = getPassiveRestaurantIncomePerMin([current.id], restaurantLevel);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-3" role="dialog" aria-modal="true" aria-label={`Open ${next.name}`}>
-      <div className="w-full max-w-md max-h-[92vh] overflow-y-auto rounded-2xl bg-slate-950 border border-slate-700 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 px-3" style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))', paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }} role="dialog" aria-modal="true" aria-label={`Open ${next.name}`}>
+      <div className="w-full max-w-md max-h-full overflow-y-auto rounded-2xl bg-slate-950 border border-slate-700 shadow-2xl">
         {/* Hero banner in the restaurant's own colours */}
         <div
           className="relative px-5 pt-5 pb-4"
