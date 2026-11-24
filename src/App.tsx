@@ -195,9 +195,14 @@ function loadSavedState(): { state: SaveState; hasExisting: boolean } {
         dailyLogin: { ...base.dailyLogin, ...(parsed.dailyLogin ?? {}) },
         today: { ...base.today, ...(parsed.today ?? {}) },
         lastSeenAt: typeof parsed.lastSeenAt === 'number' ? parsed.lastSeenAt : null,
-        graphicsQuality: ['auto', 'low', 'medium', 'high'].includes(parsed.graphicsQuality as string)
-          ? (parsed.graphicsQuality as SaveState['graphicsQuality'])
-          : base.graphicsQuality,
+        // Saves from before the High default (no joystickSide yet) move from Auto to High once
+        graphicsQuality:
+          parsed.joystickSide === undefined && (parsed.graphicsQuality ?? 'auto') === 'auto'
+            ? 'high'
+            : ['auto', 'low', 'medium', 'high'].includes(parsed.graphicsQuality as string)
+              ? (parsed.graphicsQuality as SaveState['graphicsQuality'])
+              : base.graphicsQuality,
+        joystickSide: parsed.joystickSide === 'right' ? 'right' : 'left',
         hapticsEnabled:
           typeof parsed.hapticsEnabled === 'boolean' ? parsed.hapticsEnabled : base.hapticsEnabled,
         recipeMastery: { ...(parsed.recipeMastery ?? {}) },
@@ -1053,11 +1058,12 @@ export default function App() {
       screen === 'paused' ||
       drawerTab !== 'none' ||
       cookModal !== null ||
-      showDailyModal ||
+      // The daily bonus popup waits until the tutorial is over, so it must not pause the game meanwhile
+      (showDailyModal && !tutorialOn) ||
       offlineReward !== null;
     engineRef.current?.setTitleMode(isTitle);
     engineRef.current?.setPaused(isPaused);
-  }, [screen, drawerTab, cookModal, showDailyModal, offlineReward]);
+  }, [screen, drawerTab, cookModal, showDailyModal, offlineReward, tutorialOn]);
 
   // Passive Franchise Income + Daily Salaries + Auto-Save + Day Rollover Check every 10s
   useEffect(() => {
@@ -1555,6 +1561,7 @@ export default function App() {
           {/* Touch: floating joystick zone on the left (right side stays for camera drag/pinch) */}
           {isTouch && drawerTab === 'none' && !cookModal && (
             <FloatingJoystick
+              side={save.joystickSide ?? 'left'}
               onMove={(x, y) => engineRef.current?.setJoystick(x, y)}
               onTap={(x, y) => engineRef.current?.tapAt(x, y)}
               bottomInset={compact ? (dockCollapsed ? 40 : 84) : dockCollapsed ? 48 : 104}
@@ -2233,10 +2240,12 @@ export default function App() {
           {/* Bottom-Right Context Action Button (Mobile & Desktop) */}
           {compact && (hud.nearbyPrompt || hud.heldRecipe) && (
             <div
-              className="fixed right-2 flex flex-col items-end gap-1.5"
+              className={`fixed flex flex-col gap-1.5 ${save.joystickSide === 'right' ? 'left-2 items-start' : 'right-2 items-end'}`}
               style={{
                 bottom: `calc(${dockCollapsed ? '3.25rem' : '6rem'} + env(safe-area-inset-bottom))`,
-                marginRight: 'env(safe-area-inset-right)',
+                ...(save.joystickSide === 'right'
+                  ? { marginLeft: 'env(safe-area-inset-left)' }
+                  : { marginRight: 'env(safe-area-inset-right)' }),
               }}
             >
               {hud.heldRecipe && (
@@ -2480,6 +2489,7 @@ export default function App() {
           setShowHowTo(true);
         }}
         onReplayTutorial={replayTutorial}
+        onSetJoystickSide={(side) => commitSave((p) => ({ ...p, joystickSide: side }))}
         onOpenGrandOpening={() => {
           sound.playClick();
           setShowGrandOpening(true);
@@ -2550,6 +2560,7 @@ export default function App() {
         <TutorialGuide
           step={guideStep}
           isTouch={isTouch}
+          joystickSide={save.joystickSide ?? 'left'}
           compact={compact}
           ready={guideReady}
           onNext={() => advanceGuide(guideStep)}
@@ -2561,7 +2572,7 @@ export default function App() {
       {tutorialOn && hud.guidePointer && !hud.guidePointer.onScreen && drawerTab === 'none' && !cookModal && (
         <GuideEdgePointer x={hud.guidePointer.x} y={hud.guidePointer.y} angle={hud.guidePointer.angle} />
       )}
-      {showHowTo && <HowToPlay isTouch={isTouch} onClose={() => setShowHowTo(false)} onReplayTutorial={replayTutorial} />}
+      {showHowTo && <HowToPlay isTouch={isTouch} joystickSide={save.joystickSide ?? 'left'} onClose={() => setShowHowTo(false)} onReplayTutorial={replayTutorial} />}
 
       {showAlbum && (
         <RecipeAlbum

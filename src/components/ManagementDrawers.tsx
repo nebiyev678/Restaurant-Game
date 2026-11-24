@@ -101,6 +101,7 @@ interface ManagementDrawersProps {
   onOpenGrandOpening: () => void;
   onOpenHowToPlay: () => void;
   onReplayTutorial: () => void;
+  onSetJoystickSide: (side: 'left' | 'right') => void;
 }
 
 export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
@@ -139,6 +140,7 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
   onOpenGrandOpening,
   onOpenHowToPlay,
   onReplayTutorial,
+  onSetJoystickSide,
 }) => {
   const [restaurantSub, setRestaurantSub] = useState<'equipment' | 'themes'>('equipment');
   const [lifestyleSub, setLifestyleSub] = useState<'clothing' | 'cars' | 'housing'>('clothing');
@@ -1550,6 +1552,31 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                         }`}
                       >
                         {q}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="rounded-xl bg-slate-900 border border-slate-800 p-4 flex items-center justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-sm text-white">Joystick side</p>
+                  <p className="text-xs text-slate-400">Walk with your left or right thumb; the action button moves to the other side</p>
+                </div>
+                <div className="flex rounded-lg bg-slate-800 p-1 shrink-0" role="radiogroup" aria-label="Joystick side">
+                  {(['left', 'right'] as const).map((side) => {
+                    const on = (save.joystickSide ?? 'left') === side;
+                    return (
+                      <button
+                        key={side}
+                        role="radio"
+                        aria-checked={on}
+                        onClick={() => onSetJoystickSide(side)}
+                        className={`min-w-[60px] min-h-[40px] px-3 rounded-md text-xs font-bold cursor-pointer ${
+                          on ? 'bg-amber-500 text-slate-950' : 'text-slate-300'
+                        }`}
+                      >
+                        {side === 'left' ? 'Left' : 'Right'}
                       </button>
                     );
                   })}

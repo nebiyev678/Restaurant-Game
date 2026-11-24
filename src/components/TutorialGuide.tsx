@@ -5,6 +5,7 @@ import { GUIDE_STEPS } from '../game/tutorial';
 interface TutorialGuideProps {
   step: number;
   isTouch: boolean;
+  joystickSide?: 'left' | 'right';
   compact: boolean;
   /** True when the step's condition is met and its button can be pressed. */
   ready: boolean;
@@ -15,7 +16,7 @@ interface TutorialGuideProps {
 }
 
 /** Step card for the guided beginner tutorial. */
-export const TutorialGuide: React.FC<TutorialGuideProps> = ({ step, isTouch, compact, ready, onNext, onSkip, skipLabel = 'Skip tutorial', onHowToPlay }) => {
+export const TutorialGuide: React.FC<TutorialGuideProps> = ({ step, isTouch, joystickSide = 'left', compact, ready, onNext, onSkip, skipLabel = 'Skip tutorial', onHowToPlay }) => {
   const s = GUIDE_STEPS[step];
   if (!s) return null;
   const hasButton = s.advance === 'button' || s.advance === 'order';
@@ -39,7 +40,7 @@ export const TutorialGuide: React.FC<TutorialGuideProps> = ({ step, isTouch, com
                 {step + 1}/{GUIDE_STEPS.length}
               </span>
             </div>
-            <p className="mt-1 text-[12px] leading-snug text-slate-200">{isTouch ? s.body.touch : s.body.desktop}</p>
+            <p className="mt-1 text-[12px] leading-snug text-slate-200">{(isTouch ? s.body.touch : s.body.desktop).replace('{side}', joystickSide)}</p>
           </div>
         </div>
 

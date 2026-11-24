@@ -6,6 +6,8 @@ interface FloatingJoystickProps {
   onTap: (clientX: number, clientY: number) => void;
   /** Pixels reserved at the bottom (management dock) where the zone should not reach. */
   bottomInset?: number;
+  /** Which half of the screen holds the stick (the action button goes on the other side). */
+  side?: 'left' | 'right';
 }
 
 const RADIUS = 44; // max knob travel in px
@@ -18,7 +20,7 @@ const TAP_MAX_MOVE = 10;
  * screen drops the stick under your thumb. At rest a faded hint shows where it is.
  * The right side of the screen stays free for drag-to-rotate and pinch-to-zoom.
  */
-export const FloatingJoystick: React.FC<FloatingJoystickProps> = ({ onMove, onTap, bottomInset = 96 }) => {
+export const FloatingJoystick: React.FC<FloatingJoystickProps> = ({ onMove, onTap, bottomInset = 96, side = 'left' }) => {
   const zoneRef = useRef<HTMLDivElement>(null);
   const pointerRef = useRef<{ id: number; ox: number; oy: number; t: number; maxMove: number } | null>(null);
   const [origin, setOrigin] = useState<{ x: number; y: number } | null>(null);
@@ -83,7 +85,7 @@ export const FloatingJoystick: React.FC<FloatingJoystickProps> = ({ onMove, onTa
       onPointerMove={onPointerMove}
       onPointerUp={end}
       onPointerCancel={end}
-      className="pointer-events-auto fixed left-0 w-[46%] touch-none select-none"
+      className={`pointer-events-auto fixed ${side === 'right' ? 'right-0' : 'left-0'} w-[46%] touch-none select-none`}
       style={{ top: '22%', bottom: `calc(${bottomInset}px + env(safe-area-inset-bottom))` }}
       aria-label="Movement area: touch and drag to walk"
       role="application"
@@ -92,7 +94,7 @@ export const FloatingJoystick: React.FC<FloatingJoystickProps> = ({ onMove, onTa
       {!origin && (
         <div
           className="pointer-events-none absolute w-20 h-20 rounded-full border border-white/15 bg-slate-950/20 flex items-center justify-center"
-          style={{ left: 'calc(20px + env(safe-area-inset-left))', bottom: 16 }}
+          style={side === 'right' ? { right: 'calc(20px + env(safe-area-inset-right))', bottom: 16 } : { left: 'calc(20px + env(safe-area-inset-left))', bottom: 16 }}
         >
           <div className="w-8 h-8 rounded-full bg-amber-400/35 border border-amber-100/30" />
         </div>
