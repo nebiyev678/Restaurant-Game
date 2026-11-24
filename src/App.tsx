@@ -25,6 +25,7 @@ import {
   Sparkles,
   Star,
   Store,
+  Palette,
   Trash2,
   Users,
   Utensils,
@@ -57,6 +58,8 @@ import {
   rollAlbumCards,
 } from './game/cuisines';
 import { DayReportCard } from './components/DayReportCard';
+import { DesignMode, DesignSelection } from './components/DesignMode';
+import { createEmptyLayout, DECOR_BY_ID, DecorItemId, FLOORS, FloorId, isSeating, seatingCount, sellValue, WALLS, WallId } from './game/decor';
 import { FloatingJoystick } from './components/FloatingJoystick';
 import { PreviewThumb } from './components/ItemPreview';
 import { ManagementDrawers } from './components/ManagementDrawers';
@@ -301,6 +304,9 @@ export default function App() {
   // Compact HUD on phones/tablets: smaller text, icons instead of words, nothing covering the play area
   const compact = isTouch;
 
+  // Interior design mode (rearrange and decorate the dining room)
+  const [designMode, setDesignMode] = useState(false);
+  const [designSel, setDesignSel] = useState<DesignSelection | null>(null);
   const [cookModal, setCookModal] = useState<{
     station: StationType;
     suggestedOrder: CustomerOrder | null;
@@ -562,6 +568,10 @@ export default function App() {
           'amber'
         );
       },
+      onLayoutChange: (layout) => {
+        commitSave((prev) => ({ ...prev, layout }));
+      },
+      onDesignSelection: (sel) => setDesignSel(sel),
       onCookPerfect: (recipeId, qualityBonus) => {
         haptic(HAPTIC.success);
         pushPopup(`Perfect! ${'★'.repeat(qualityStars(qualityBonus))} ${RECIPES[recipeId].name}`, 'amber');
@@ -1132,10 +1142,91 @@ export default function App() {
       cookModal !== null ||
       // The daily bonus popup waits until the tutorial is over, so it must not pause the game meanwhile
       (showDailyModal && !tutorialOn) ||
-      offlineReward !== null;
+      offlineReward !== null ||
+      designMode;
     engineRef.current?.setTitleMode(isTitle);
     engineRef.current?.setPaused(isPaused);
-  }, [screen, drawerTab, cookModal, showDailyModal, offlineReward, tutorialOn]);
+  }, [screen, drawerTab, cookModal, showDailyModal, offlineReward, tutorialOn, designMode]);
+
+  // Design mode: the engine switches to the top-down room view and furniture dragging
+  useEffect(() => {
+    engineRef.current?.setDesignMode(designMode && screen !== 'title');
+    if (!designMode) setDesignSel(null);
+  }, [designMode, screen]);
+
+  const openDesignMode = useCallback(() => {
+    sound.playClick();
+    setDrawerTab('none');
+    setCookModal(null);
+    setDesignMode(true);
+  }, []);
+
+  const handleDesignBuy = useCallback(
+    (item: DecorItemId) => {
+      const def = DECOR_BY_ID[item];
+      const s = saveRef.current;
+      if (s.restaurantLevel < def.level) return;
+      if (s.restaurantCash < def.price) {
+        haptic(HAPTIC.tap);
+        showToast('Not enough cash', `${def.name} costs $${def.price.toLocaleString()}.`);
+        return;
+      }
+      if (isSeating(item) && seatingCount(s.layout ?? createEmptyLayout()) >= getEffectiveTier(s).tableCount) {
+        haptic(HAPTIC.tap);
+        showToast('The dining room is full', 'Sell a table, or build a bigger dining room in Cafe → Expansions.');
+        return;
+      }
+      const res = engineRef.current?.designAdd(item);
+      if (!res || 'problem' in res) {
+        showToast("Can't place it", res && 'problem' in res ? res.problem : 'Try again');
+        return;
+      }
+      sound.playUnlock();
+      haptic(HAPTIC.success);
+      commitSave((prev) => ({ ...prev, restaurantCash: prev.restaurantCash - def.price }));
+      pushPopup(`${def.name}! Drag it into place`, 'amber');
+    },
+    [commitSave, showToast]
+  );
+
+  const handleDesignSell = useCallback(() => {
+    const res = engineRef.current?.designRemoveSelected();
+    if (!res) return;
+    if ('problem' in res) {
+      showToast("Can't sell it now", res.problem);
+      return;
+    }
+    const refund = sellValue(res.item);
+    sound.playCash();
+    commitSave((prev) => ({ ...prev, restaurantCash: prev.restaurantCash + refund }));
+    pushPopup(`Sold ${DECOR_BY_ID[res.item].name} +$${refund}`, 'emerald');
+  }, [commitSave, showToast]);
+
+  const handleDesignSurface = useCallback(
+    (kind: 'floor' | 'wall', id: string) => {
+      const s = saveRef.current;
+      const layout = s.layout ?? createEmptyLayout();
+      const def = kind === 'floor' ? FLOORS.find((f) => f.id === id) : WALLS.find((w) => w.id === id);
+      if (!def || s.restaurantLevel < def.level) return;
+      const owned = kind === 'floor' ? layout.ownedFloors.includes(id as FloorId) : layout.ownedWalls.includes(id as WallId);
+      if (!owned && s.restaurantCash < def.price) {
+        haptic(HAPTIC.tap);
+        showToast('Not enough cash', `${def.name} costs $${def.price.toLocaleString()}.`);
+        return;
+      }
+      sound.playClick();
+      commitSave((prev) => {
+        const l = prev.layout ?? createEmptyLayout();
+        const next =
+          kind === 'floor'
+            ? { ...l, floor: id as FloorId, ownedFloors: owned ? l.ownedFloors : [...l.ownedFloors, id as FloorId] }
+            : { ...l, wall: id as WallId, ownedWalls: owned ? l.ownedWalls : [...l.ownedWalls, id as WallId] };
+        return { ...prev, layout: next, restaurantCash: prev.restaurantCash - (owned ? 0 : def.price) };
+      });
+      if (!owned) pushPopup(`${def.name}! Charm +${def.charm}`, 'amber');
+    },
+    [commitSave, showToast]
+  );
 
   // Passive Franchise Income + Daily Salaries + Auto-Save + Day Rollover Check every 10s
   useEffect(() => {
@@ -1628,7 +1719,31 @@ export default function App() {
       )}
 
       {/* Active Gameplay HUD (pointer-events-none wrapper, >=85% viewport unobstructed) */}
-      {screen !== 'title' && (
+      {screen !== 'title' && designMode && (
+        <DesignMode
+          layout={save.layout}
+          cash={save.restaurantCash}
+          level={save.restaurantLevel}
+          tableLimit={getEffectiveTier(save).tableCount}
+          selection={designSel}
+          compact={compact}
+          onBuy={handleDesignBuy}
+          onRotate={() => {
+            const problem = engineRef.current?.designRotate();
+            if (problem) haptic(HAPTIC.tap);
+            else sound.playClick();
+          }}
+          onSell={handleDesignSell}
+          onDeselect={() => engineRef.current?.designDeselect()}
+          onSurface={handleDesignSurface}
+          onDone={() => {
+            sound.playClick();
+            setDesignMode(false);
+          }}
+        />
+      )}
+
+      {screen !== 'title' && !designMode && (
         <div className="fixed inset-0 z-20 pointer-events-none">
           {/* Touch: floating joystick zone on the left (right side stays for camera drag/pinch) */}
           {isTouch && drawerTab === 'none' && !cookModal && (
@@ -2472,6 +2587,7 @@ export default function App() {
               >
                 {[
                   { id: 'restaurant', label: 'Restaurant', icon: Store },
+                  { id: 'design', label: 'Design', icon: Palette },
                   { id: 'kitchen', label: 'Kitchen', icon: ChefHat },
                   { id: 'staff', label: 'Staff', icon: Users },
                   { id: 'city', label: 'City', icon: Building2 },
@@ -2498,6 +2614,10 @@ export default function App() {
                         if (item.id === 'album') {
                           setDrawerTab('none');
                           openAlbum();
+                          return;
+                        }
+                        if (item.id === 'design') {
+                          openDesignMode();
                           return;
                         }
                         sound.playClick();

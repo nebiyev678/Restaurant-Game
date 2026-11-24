@@ -1165,7 +1165,7 @@ export function getRestaurantTier(level: number): {
 }
 
 /** Bottom-menu sections, unlocked one by one as the restaurant levels up. */
-export type FeatureId = 'kitchen' | 'missions' | 'restaurant' | 'staff' | 'album' | 'city' | 'lifestyle' | 'settings';
+export type FeatureId = 'kitchen' | 'missions' | 'restaurant' | 'design' | 'staff' | 'album' | 'city' | 'lifestyle' | 'settings';
 
 export const FEATURE_UNLOCKS: Record<FeatureId, { level: number; title: string; icon: string; perks: string[] }> = {
   kitchen: { level: 1, title: 'Kitchen', icon: '👨‍🍳', perks: ['Unlock new dishes', 'See every recipe and its machine'] },
@@ -1178,6 +1178,12 @@ export const FEATURE_UNLOCKS: Record<FeatureId, { level: number; title: string; 
     perks: ['Upgrade machines so they cook faster', 'Build expansions: takeaway counter, terrace, bigger rooms', 'New interior styles'],
   },
   staff: { level: 3, title: 'Staff', icon: '🧑‍🍳', perks: ['Hire chefs who cook for you', 'Waiters who serve and clean tables', 'A manager and a cashier'] },
+  design: {
+    level: 5,
+    title: 'Design',
+    icon: '🎨',
+    perks: ['Move, turn and sell tables, booths and plants', 'Buy furniture, decorations, floors and wallpaper', 'A charming room brings a few more guests and tips'],
+  },
   album: { level: 4, title: 'Recipe Album', icon: '📖', perks: ['Collect cards of dishes and sights', 'A full page adds +3% to every dish'] },
   city: {
     level: 5,

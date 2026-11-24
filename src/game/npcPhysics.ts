@@ -221,6 +221,54 @@ export class RestaurantNavGrid {
     return idx0;
   }
 
+  /** Every cell reachable on foot from a point (1 = reachable). */
+  public floodFrom(x: number, z: number): Uint8Array {
+    const seen = new Uint8Array(this.cols * this.rows);
+    const { c, r } = this.worldToCell(x, z);
+    const start = this.findNearestWalkable(c, r);
+    if (this.blocked[start]) return seen;
+    const queue = [start];
+    seen[start] = 1;
+    while (queue.length) {
+      const idx = queue.pop()!;
+      const cc = idx % this.cols;
+      const rr = (idx - cc) / this.cols;
+      for (const [dc, dr] of [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ]) {
+        const nc = cc + dc;
+        const nr = rr + dr;
+        if (nc < 0 || nc >= this.cols || nr < 0 || nr >= this.rows) continue;
+        const n = nr * this.cols + nc;
+        if (seen[n] || this.blocked[n]) continue;
+        seen[n] = 1;
+        queue.push(n);
+      }
+    }
+    return seen;
+  }
+
+  /** True when a point (or a cell right next to it) was reached by `floodFrom`. */
+  public canReach(flood: Uint8Array, x: number, z: number): boolean {
+    const { c, r } = this.worldToCell(x, z);
+    for (const [dc, dr] of [
+      [0, 0],
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ]) {
+      const nc = c + dc;
+      const nr = r + dr;
+      if (nc < 0 || nc >= this.cols || nr < 0 || nr >= this.rows) continue;
+      if (flood[nr * this.cols + nc]) return true;
+    }
+    return false;
+  }
+
   public hasGridLineOfSight(x0: number, z0: number, x1: number, z1: number): boolean {
     const dist = Math.hypot(x1 - x0, z1 - z0);
     const steps = Math.max(3, Math.ceil(dist / (this.cellSize * 0.25)));

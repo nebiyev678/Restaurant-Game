@@ -3074,27 +3074,47 @@ export interface DiningTableParts {
   seatOffsets: THREE.Vector3[];
 }
 
-export function createDiningTableMesh(isVip = false, theme?: CafeThemeDef): DiningTableParts {
+/** Colour overrides for the furniture sets sold in design mode. */
+export interface TableStyle {
+  woodPrimary?: string;
+  woodSecondary?: string;
+  cushion?: string;
+  leg?: string;
+  legMetal?: number;
+  /** Polished marble table top instead of wood. */
+  marbleTop?: string;
+  /** Soft velvet sheen on the cushions. */
+  velvet?: boolean;
+}
+
+export function createDiningTableMesh(isVip = false, theme?: CafeThemeDef, style?: TableStyle): DiningTableParts {
   const group = new THREE.Group();
   group.add(createContactShadow(1.25, 0.95, 0.55));
 
+  const woodA = style?.woodPrimary ?? theme?.woodPrimary ?? '#de944b';
+  const woodB = style?.woodSecondary ?? theme?.woodSecondary ?? '#9e5924';
   const oakMat = new THREE.MeshStandardMaterial({
-    map: createWoodTexture(theme?.woodPrimary ?? '#de944b', theme?.woodSecondary ?? '#9e5924', 2),
+    map: createWoodTexture(woodA, woodB, 2),
     roughness: 0.45,
   });
   const darkWoodMat = new THREE.MeshStandardMaterial({
-    map: createWoodTexture(theme?.woodSecondary ?? '#8f4d1e', '#5c2d10', 2),
+    map: createWoodTexture(style?.woodSecondary ?? theme?.woodSecondary ?? '#8f4d1e', '#5c2d10', 2),
     roughness: 0.52,
   });
   const legMat = new THREE.MeshStandardMaterial({
-    color: theme?.id === 'royal_salon' ? '#b45309' : '#323438',
+    color: style?.leg ?? (theme?.id === 'royal_salon' ? '#b45309' : '#323438'),
     roughness: 0.38,
-    metalness: theme?.id === 'royal_salon' ? 0.65 : 0.42,
+    metalness: style?.legMetal ?? (theme?.id === 'royal_salon' ? 0.65 : 0.42),
   });
-  const cushionMat = new THREE.MeshStandardMaterial({
-    color: theme?.cushionColor ?? '#d93829',
-    roughness: 0.56,
-  });
+  const cushionMat = style?.velvet
+    ? new THREE.MeshPhysicalMaterial({ color: style.cushion ?? '#1f6b4f', roughness: 0.7, sheen: 1, sheenColor: new THREE.Color('#9be3c5'), sheenRoughness: 0.4 })
+    : new THREE.MeshStandardMaterial({
+        color: style?.cushion ?? theme?.cushionColor ?? '#d93829',
+        roughness: 0.56,
+      });
+  const topMat = style?.marbleTop
+    ? new THREE.MeshStandardMaterial({ color: style.marbleTop, roughness: 0.18, metalness: 0.02 })
+    : oakMat;
   const trimMat = new THREE.MeshStandardMaterial({
     color: theme?.trimColor ?? '#c9362b',
     roughness: 0.5,
@@ -3105,7 +3125,7 @@ export function createDiningTableMesh(isVip = false, theme?: CafeThemeDef): Dini
   const topW = isVip ? 0.96 : 1.16;
   const topD = isVip ? 1.18 : 1.12;
   // Soft rounded edges for a chunky, cozy look
-  const top = new THREE.Mesh(new RoundedBoxGeometry(topW, 0.09, topD, 3, 0.035), oakMat);
+  const top = new THREE.Mesh(new RoundedBoxGeometry(topW, 0.09, topD, 3, 0.035), topMat);
   top.position.y = 0.76;
   top.castShadow = true;
   top.receiveShadow = true;

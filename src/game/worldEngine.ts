@@ -7,6 +7,25 @@ import { CUISINES, getAlbumPriceMult, getMenuRecipes, getNextCuisine } from './c
 import { createCuisineDecor } from './cuisineDecor';
 import { CookVisual, createCookVisual, loadFoodModels } from './foodModels';
 import {
+  computeCharm,
+  createEmptyLayout,
+  DECOR_BY_ID,
+  DecorItemId,
+  decorRect,
+  getCharmBonus,
+  isSeating,
+  newDecorUid,
+  nextTableNo,
+  PlacedDecor,
+  Rect,
+  rectsOverlap,
+  RestaurantLayout,
+  seatingCount,
+  seatingPoints,
+  snapToGrid,
+} from './decor';
+import { createDecorMesh, createDecorFloorTexture, createDecorWallTexture, createSeatingMesh } from './decorModels';
+import {
   createBagStack,
   createCozyPendant,
   createHeatLampBar,
@@ -89,6 +108,7 @@ import {
   getStaffAppearance,
 } from './models';
 import {
+  CafeThemeDef,
   CustomerArchetype,
   CustomerOrder,
   DrawerTab,
@@ -127,6 +147,9 @@ import {
 // Pre-allocated math helpers (zero GC in loop)
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
+const _ndc = new THREE.Vector2();
+/** Dining-room floor height, for dragging furniture around in design mode. */
+const _floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.1);
 const _v3 = new THREE.Vector3();
 const _proj = new THREE.Vector3();
 const _rayMouse = new THREE.Vector2();
@@ -164,6 +187,8 @@ interface SimTable {
   x: number;
   z: number;
   isVip: boolean;
+  /** Seats face each other along z (table turned a quarter) instead of along x. */
+  alongZ: boolean;
   occupiedBy: string | null;
   dirty: boolean;
   parts: DiningTableParts;
@@ -231,6 +256,10 @@ export interface EngineCallbacks {
   onDirtyChanged: (cleanlinessDelta: number) => void;
   /** A machine finished cooking; the dish now waits on that machine for the chef to take it. */
   onDishReady: (recipeId: RecipeId, qualityBonus: number, station: StationType, collected: boolean) => void;
+  /** Design mode: the dining-room layout changed (save it). */
+  onLayoutChange?: (layout: RestaurantLayout) => void;
+  /** Design mode: what is selected (null = nothing) and why it can't go where it was dragged. */
+  onDesignSelection?: (sel: { uid: string; item: DecorItemId; busy: boolean; problem: string | null } | null) => void;
   /** The chef hit the optional "Perfect!" tap while a dish cooked. */
   onCookPerfect?: (recipeId: RecipeId, qualityBonus: number) => void;
   /** Fired once when the in-game clock passes midnight during active play. */
@@ -322,6 +351,41 @@ export class RestaurantWorldEngine {
   private restaurantColliders: WorldCollider[] = [];
   private homeColliders: WorldCollider[] = [];
   private restaurantBounds = { minX: -12, maxX: 3, minZ: -7, maxZ: 7 };
+  // ---- Interior design (saved layout of the dining room) ----
+  /** Restaurant colliders that are not part of the layout (walls, counters, machines). */
+  private fixedRestaurantColliders: WorldCollider[] = [];
+  private nearbyStaticColliders: WorldCollider[] = [];
+  private diningRect: Rect = { minX: -6, maxX: 2.7, minZ: -6.6, maxZ: 6.7 };
+  private keepClear: Rect[] = [];
+  private serviceReachPoints: { x: number; z: number }[] = [];
+  private entrancePoint = { x: 2, z: 0 };
+  private terraceSeating: { x: number; z: number }[] = [];
+  private layoutCache = new Map<
+    string,
+    { key: string; root: THREE.Group; parts?: DiningTableParts; glows: GlowMat[]; bulbs: THREE.MeshStandardMaterial[] }
+  >();
+  /** Walkable cells reachable from the entrance (for choosing open aisle sides). */
+  private reachFlood: Uint8Array | null = null;
+  private checkNav = new RestaurantNavGrid();
+  private charmBonus = { guests: 0, tips: 0, patience: 0 };
+  private designMode = false;
+  private designSel: string | null = null;
+  private designDrag: {
+    uid: string;
+    offX: number;
+    offZ: number;
+    startX: number;
+    startZ: number;
+    candX: number;
+    candZ: number;
+    reason: string | null;
+    moved: boolean;
+  } | null = null;
+  private designPan: { x: number; z: number } | null = null;
+  private designFocus = new THREE.Vector3();
+  private designGrid: THREE.Mesh | null = null;
+  private designMarker: THREE.Mesh | null = null;
+  private designPointerId: number | null = null;
   private navGrid = new RestaurantNavGrid();
   private avoidanceActors: AvoidanceActor[] = [];
 
@@ -1180,7 +1244,7 @@ export class RestaurantWorldEngine {
 
     // 1. Rebuild Restaurant Structure & Tables if tier or cafe theme changed
     const activeThemeId = save.activeCafeThemeId ?? 'classic_bistro';
-    const stationsKey = `${save.activeCuisine ?? 'bistro'}|${getActiveStations(getMenuRecipes(save)).join(',')}|${[...(save.expansions ?? [])].sort().join(',')}`;
+    const stationsKey = `${save.activeCuisine ?? 'bistro'}|${getActiveStations(getMenuRecipes(save)).join(',')}|${[...(save.expansions ?? [])].sort().join(',')}|${save.layout?.floor ?? 'theme'}|${save.layout?.wall ?? 'theme'}`;
     if (
       force ||
       this.lastTier !== tierInfo.tier ||
@@ -1341,16 +1405,24 @@ export class RestaurantWorldEngine {
       floorSpanD,
       maxAniso
     );
+    // Flooring chosen in design mode replaces the style's own floor
+    const floorChoice = this.saveRef.current.layout?.floor ?? 'theme';
     const diningFloor = new THREE.Mesh(
       new THREE.BoxGeometry(diningW, 0.018, floorSpanD),
-      new THREE.MeshStandardMaterial({
-        map: diningTextures.map,
-        bumpMap: diningTextures.bumpMap,
-        bumpScale: 0.016,
-        roughnessMap: diningTextures.roughnessMap,
-        roughness: 0.95,
-        metalness: activeTheme.id === 'royal_salon' ? 0.06 : 0.02,
-      })
+      floorChoice !== 'theme'
+        ? new THREE.MeshStandardMaterial({
+            map: createDecorFloorTexture(floorChoice, diningW, floorSpanD, maxAniso),
+            roughness: floorChoice === 'marble' ? 0.3 : 0.75,
+            metalness: 0.02,
+          })
+        : new THREE.MeshStandardMaterial({
+            map: diningTextures.map,
+            bumpMap: diningTextures.bumpMap,
+            bumpScale: 0.016,
+            roughnessMap: diningTextures.roughnessMap,
+            roughness: 0.95,
+            metalness: activeTheme.id === 'royal_salon' ? 0.06 : 0.02,
+          })
     );
     diningFloor.position.set((kitchenEndX + diningEndX) / 2, 0.101, 0);
     diningFloor.receiveShadow = true;
@@ -1371,8 +1443,11 @@ export class RestaurantWorldEngine {
     this.restaurantGroup.add(entryRunner);
 
     // Back & Left Cutaway Walls with caramel-wood pilasters, cap molding, baseboard & white subway-tile kitchen backsplash
+    // Wallpaper chosen in design mode (otherwise the style's paint colour)
+    const wallChoice = this.saveRef.current.layout?.wall ?? 'theme';
     const wallMat = new THREE.MeshStandardMaterial({
-      color: activeTheme.wallColor,
+      color: wallChoice === 'theme' ? activeTheme.wallColor : '#ffffff',
+      map: wallChoice === 'theme' ? null : createDecorWallTexture(wallChoice, w, 2.95),
       roughness: 0.72,
     });
     const woodTrimMat = new THREE.MeshStandardMaterial({
@@ -1396,8 +1471,10 @@ export class RestaurantWorldEngine {
       base: darkBaseMat,
       subway: subwayMat,
     };
+    const leftWallMat = wallMat.clone();
+    if (wallChoice !== 'theme') leftWallMat.map = createDecorWallTexture(wallChoice, d, 2.95);
     const leftSet = {
-      wall: wallMat.clone(),
+      wall: leftWallMat,
       trim: woodTrimMat.clone(),
       base: darkBaseMat.clone(),
       subway: subwayMat.clone(),
@@ -1878,28 +1955,52 @@ export class RestaurantWorldEngine {
     menuBoard.position.set(centerX + 3.8, 1.88, minZ + 0.36);
     this.restaurantGroup.add(menuBoard);
 
-    // Decorative Potted Plants along Dining Room Corners (avoiding doorway & specialty station)
-    const plantSpots: [number, number][] = [
-      [maxX - 0.75, minZ + 1.0],
-      [maxX - 0.75, maxZ - 1.0],
-      [minX + 2.6, maxZ - 0.85],
-      [maxX - 0.75, -2.7],
-      [maxX - 0.75, 2.7],
+    // Dining room furniture and decorations come from the saved layout (design mode)
+    this.fixedRestaurantColliders = this.restaurantColliders.slice();
+    this.diningRect = { minX: kitchenEndX + 0.25, maxX: maxX - 0.3, minZ: minZ + 0.36, maxZ: maxZ - 0.3 };
+    this.entrancePoint = { x: maxX - 0.9, z: 0 };
+    this.keepClear = [
+      // Entrance doors and runner
+      { minX: maxX - 2.7, maxX: maxX + 1, minZ: -1.45, maxZ: 1.45 },
+      // Register and the takeaway queue
+      { minX: -6.3, maxX: -1.6, minZ: -3.1, maxZ: -1.75 },
+      // In front of the pass counter
+      { minX: kitchenEndX - 0.2, maxX: kitchenEndX + 0.7, minZ: passZ - 1.5, maxZ: passZ + 1.5 },
+      // Where the cook stands at each machine
+      ...this.stations.map((st) => ({ minX: st.x - 0.75, maxX: st.x + 0.75, minZ: st.z - 0.75, maxZ: st.z + 0.75 })),
     ];
-    const plantCount = Math.min(tier + 1, plantSpots.length);
-    for (let i = 0; i < plantCount; i++) {
-      const plant = createPottedPlantMesh(activeTheme.trimColor);
-      const [px, pz] = plantSpots[i];
-      plant.position.set(px, 0.1, pz);
-      this.restaurantGroup.add(plant);
-      this.restaurantColliders.push({ kind: 'circle', x: px, z: pz, r: 0.3 });
+    this.serviceReachPoints = [
+      { x: -4, z: -2.35 },
+      { x: kitchenEndX + 0.45, z: passZ },
+      ...this.stations.map((st) => ({ x: st.x, z: st.z })),
+    ];
+    const restBounds = { minX: minX - 3, maxX: maxX + 3, minZ: minZ - 3, maxZ: maxZ + 3 };
+    this.nearbyStaticColliders = this.staticColliders.filter((c) =>
+      c.kind === 'aabb'
+        ? c.maxX > restBounds.minX && c.minX < restBounds.maxX && c.maxZ > restBounds.minZ && c.minZ < restBounds.maxZ
+        : c.x > restBounds.minX && c.x < restBounds.maxX && c.z > restBounds.minZ && c.z < restBounds.maxZ
+    );
+    this.terraceSeating = [];
+    if (hasTerrace) {
+      for (const side of [-1, 1]) {
+        for (const lx of TERRACE_TABLE_X) this.terraceSeating.push({ x: maxX + lx, z: TERRACE_TABLE_Z * side });
+      }
     }
+    this.layoutCache.clear();
+    this.ensureLayout(tier, tableCount, { minX, maxX, minZ, maxZ });
+    this.buildLayout();
+  }
 
-    // Dining Tables (preserve existing occupation state if possible)
-    const oldTables = new Map(this.tables.map((t) => [t.id, t]));
-    this.tables = [];
+  // =========================================================================
+  // Interior design: layout of the dining room
+  // =========================================================================
 
-    const tableCoords: [number, number][] = [
+  /** Creates the starting layout (the classic room) and hands out tables as the room grows. */
+  private ensureLayout(tier: number, tableCount: number, b: { minX: number; maxX: number; minZ: number; maxZ: number }) {
+    const save = this.saveRef.current;
+    let layout = save.layout;
+    let changed = false;
+    const defaultTables: [number, number][] = [
       [-4.2, -0.6],
       [-4.2, 2.9],
       [-0.6, 2.9],
@@ -1913,71 +2014,582 @@ export class RestaurantWorldEngine {
       [2.6, 6.2],
       [2.6, -6.9],
     ];
-
-    const indoorCount = Math.min(tableCount, tableCoords.length);
-    const seating: { tx: number; tz: number; outdoor: boolean }[] = tableCoords
-      .slice(0, indoorCount)
-      .map(([tx, tz]) => ({ tx, tz, outdoor: false }));
-    // Outdoor Terrace expansion: two real tables under umbrellas on each terrace
-    if (hasTerrace) {
-      for (const side of [-1, 1]) {
-        for (const lx of TERRACE_TABLE_X) seating.push({ tx: maxX + lx, tz: TERRACE_TABLE_Z * side, outdoor: true });
+    if (!layout) {
+      layout = createEmptyLayout();
+      const plantSpots: [number, number][] = [
+        [b.maxX - 0.75, b.minZ + 1.0],
+        [b.maxX - 0.75, b.maxZ - 1.0],
+        [b.minX + 2.6, b.maxZ - 0.85],
+        [b.maxX - 0.75, -2.7],
+        [b.maxX - 0.75, 2.7],
+      ];
+      for (let i = 0; i < Math.min(tier + 1, plantSpots.length); i++) {
+        layout.items.push({ uid: newDecorUid(), item: 'plant_classic', x: plantSpots[i][0], z: plantSpots[i][1], rot: 0 });
       }
+      changed = true;
     }
-    for (let i = 0; i < seating.length; i++) {
-      const { tx, tz, outdoor } = seating[i];
-      // Booth seating mixed in from the start (every third table), like a cozy diner
-      const isVip = !outdoor && ((tier >= 4 && i >= indoorCount - 2) || i % 3 === 1);
-      const parts = createDiningTableMesh(isVip, activeTheme);
-      parts.group.position.set(tx, 0.1, tz);
-      this.tablesGroup.add(parts.group);
-      if (!outdoor) {
-        const pendant = createCozyPendant(
-          activeTheme.lightColor,
-          { hangY: 2.85, ceilingY: 3.3, dropTo: 0.9 },
-          this.cozyGlows,
-          this.cozyBulbs
-        );
-        pendant.position.set(tx, 0, tz);
-        this.restaurantGroup.add(pendant);
+    if (tableCount > layout.tablesGranted) {
+      // The room grew (or this is the first visit): one free table per new table space
+      const items = [...layout.items];
+      for (let i = layout.tablesGranted; i < tableCount; i++) {
+        const booth = (tier >= 4 && i >= tableCount - 2) || i % 3 === 1;
+        const item: DecorItemId = booth ? 'booth_red' : 'table_oak';
+        const coord = defaultTables[i];
+        let spot: { x: number; z: number } | null = null;
+        if (coord) {
+          const cand = { uid: 'probe', item, x: coord[0], z: coord[1], rot: 0 };
+          if (!this.overlapsLayout(items, cand)) spot = { x: coord[0], z: coord[1] };
+        }
+        spot = spot ?? this.findFreeSpot(items, item, false);
+        if (!spot) continue;
+        items.push({ uid: newDecorUid(), item, x: spot.x, z: spot.z, rot: 0, tableNo: 0 });
+        items[items.length - 1].tableNo = nextTableNo({ ...layout, items: items.slice(0, -1) });
       }
+      layout = { ...layout, items, tablesGranted: tableCount };
+      changed = true;
+    }
+    if (changed) this.commitLayout(layout, false);
+  }
 
-      // Solid colliders for table top + chairs / VIP booths
-      if (isVip) {
-        this.restaurantColliders.push(
-          { kind: 'aabb', minX: tx - 0.48, maxX: tx + 0.48, minZ: tz - 0.58, maxZ: tz + 0.58 },
-          { kind: 'aabb', minX: tx - 1.22, maxX: tx - 0.62, minZ: tz - 0.59, maxZ: tz + 0.59 },
-          { kind: 'aabb', minX: tx + 0.62, maxX: tx + 1.22, minZ: tz - 0.59, maxZ: tz + 0.59 }
-        );
-      } else {
-        this.restaurantColliders.push(
-          { kind: 'aabb', minX: tx - 0.59, maxX: tx + 0.59, minZ: tz - 0.56, maxZ: tz + 0.56 },
-          { kind: 'circle', x: tx - 0.98, z: tz, r: 0.24 },
-          { kind: 'circle', x: tx + 0.98, z: tz, r: 0.24 }
-        );
+  /** Saves a new layout and tells the app (which writes it to the save game). */
+  private commitLayout(layout: RestaurantLayout, rebuild = true) {
+    this.saveRef.current.layout = layout;
+    this.callbacks.onLayoutChange?.(layout);
+    if (rebuild) this.buildLayout();
+  }
+
+  /** Builds the layout's furniture (reusing unchanged pieces) and refreshes colliders and paths. */
+  private buildLayout() {
+    const save = this.saveRef.current;
+    const layout = save.layout ?? createEmptyLayout();
+    const theme = getEffectiveTheme(save);
+    const oldTables = new Map(this.tables.map((t) => [t.id, t]));
+    const keep = new Set<string>();
+    const itemCols: WorldCollider[] = [];
+    this.tables = [];
+
+    const place = (uid: string, key: string, make: () => { root: THREE.Group; parts?: DiningTableParts; glows: GlowMat[]; bulbs: THREE.MeshStandardMaterial[] }) => {
+      let entry = this.layoutCache.get(uid);
+      if (!entry || entry.key !== key) {
+        if (entry) this.disposeLayoutEntry(entry);
+        entry = { key, ...make() };
+        this.layoutCache.set(uid, entry);
+        this.tablesGroup.add(entry.root);
+        this.cozyGlows.push(...entry.glows);
+        this.cozyBulbs.push(...entry.bulbs);
       }
+      keep.add(uid);
+      return entry;
+    };
 
-      const prev = oldTables.get(i + 1);
+    const addTable = (id: number, x: number, z: number, isVip: boolean, alongZ: boolean, parts: DiningTableParts) => {
+      const prev = oldTables.get(id);
+      const same = prev && prev.parts === parts;
+      if (prev && !same && prev.servedDishMesh) prev.servedDishMesh.removeFromParent();
       const tbl: SimTable = {
-        id: i + 1,
-        x: tx,
-        z: tz,
+        id,
+        x,
+        z,
         isVip,
+        alongZ,
         occupiedBy: prev?.occupiedBy ?? null,
         dirty: prev?.dirty ?? false,
         parts,
-        servedDishMesh: null,
+        servedDishMesh: same ? prev!.servedDishMesh : null,
       };
       parts.dirtyMesh.visible = tbl.dirty;
       this.tables.push(tbl);
+    };
+
+    for (const p of layout.items) {
+      const def = DECOR_BY_ID[p.item];
+      if (!def) continue;
+      const key = `${p.item}|${p.x}|${p.z}|${p.rot}|${theme.id}`;
+      const entry = place(p.uid, key, () => this.makeLayoutEntry(p, theme));
+      itemCols.push(...this.itemColliders(p));
+      if (isSeating(p.item) && entry.parts) {
+        addTable(p.tableNo ?? 0, p.x, p.z, !!def.booth, p.rot % 2 === 1, entry.parts);
+      }
+    }
+    // Outdoor Terrace expansion: two tables under umbrellas on each terrace (not movable)
+    this.terraceSeating.forEach((t, i) => {
+      const entry = place(`terrace_${i}`, `terrace|${t.x}|${t.z}|${theme.id}`, () => {
+        const parts = createDiningTableMesh(false, theme);
+        parts.group.position.set(t.x, 0.1, t.z);
+        return { root: parts.group, parts, glows: [], bulbs: [] };
+      });
+      itemCols.push(...this.itemColliders({ item: 'table_oak', x: t.x, z: t.z, rot: 0 }));
+      addTable(1000 + i, t.x, t.z, false, false, entry.parts!);
+    });
+    for (const [uid, entry] of this.layoutCache) {
+      if (!keep.has(uid)) {
+        this.disposeLayoutEntry(entry);
+        this.layoutCache.delete(uid);
+      }
+    }
+    // Guests whose table vanished (sold while they were away) are let go gently
+    for (const [id, t] of oldTables) {
+      if (!this.tables.some((n) => n.id === id) && t.servedDishMesh) t.servedDishMesh.removeFromParent();
     }
 
-    this.navGrid.rebuild(
-      0.3,
-      this.staticColliders,
-      this.restaurantColliders,
-      this.homeColliders
+    this.restaurantColliders = [...this.fixedRestaurantColliders, ...itemCols];
+    this.navGrid.rebuild(0.3, this.staticColliders, this.restaurantColliders, this.homeColliders);
+    this.reachFlood = this.navGrid.floodFrom(this.entrancePoint.x, this.entrancePoint.z);
+    this.charmBonus = getCharmBonus(computeCharm(layout));
+    if (this.designMode) this.updateDesignMarker();
+  }
+
+  private makeLayoutEntry(p: PlacedDecor, theme: CafeThemeDef) {
+    const root = new THREE.Group();
+    root.position.set(p.x, 0, p.z);
+    root.userData.decorUid = p.uid;
+    const glows: GlowMat[] = [];
+    const bulbs: THREE.MeshStandardMaterial[] = [];
+    let parts: DiningTableParts | undefined;
+    if (isSeating(p.item)) {
+      parts = createSeatingMesh(p.item, theme);
+      parts.group.position.y = 0.1;
+      parts.group.rotation.y = (p.rot % 2) * (Math.PI / 2);
+      root.add(parts.group);
+      // Warm pendant lamp hanging over every table
+      const pendant = createCozyPendant(theme.lightColor, { hangY: 2.85, ceilingY: 3.3, dropTo: 0.9 }, glows, bulbs);
+      root.add(pendant);
+    } else {
+      const mesh = createDecorMesh(p.item, glows, theme);
+      mesh.position.y = 0.1;
+      mesh.rotation.y = p.rot * (Math.PI / 2);
+      root.add(mesh);
+    }
+    return { root, parts, glows, bulbs };
+  }
+
+  private disposeLayoutEntry(entry: { root: THREE.Group; glows: GlowMat[]; bulbs: THREE.MeshStandardMaterial[] }) {
+    entry.root.removeFromParent();
+    if (entry.glows.length) this.cozyGlows = this.cozyGlows.filter((g) => !entry.glows.includes(g));
+    if (entry.bulbs.length) this.cozyBulbs = this.cozyBulbs.filter((b) => !entry.bulbs.includes(b));
+  }
+
+  /** Solid shapes of one placed item (rugs have none). */
+  private itemColliders(p: { item: DecorItemId; x: number; z: number; rot: number }): WorldCollider[] {
+    const def = DECOR_BY_ID[p.item];
+    if (def.flat) return [];
+    if (isSeating(p.item)) {
+      const alongZ = p.rot % 2 === 1;
+      const box = (cx: number, cz: number, hx: number, hz: number): WorldCollider =>
+        alongZ
+          ? { kind: 'aabb', minX: p.x + cz - hz, maxX: p.x + cz + hz, minZ: p.z + cx - hx, maxZ: p.z + cx + hx }
+          : { kind: 'aabb', minX: p.x + cx - hx, maxX: p.x + cx + hx, minZ: p.z + cz - hz, maxZ: p.z + cz + hz };
+      if (def.booth) return [box(0, 0, 0.48, 0.58), box(-0.92, 0, 0.3, 0.59), box(0.92, 0, 0.3, 0.59)];
+      const seat = (s: number): WorldCollider =>
+        alongZ ? { kind: 'circle', x: p.x, z: p.z + s * 0.98, r: 0.24 } : { kind: 'circle', x: p.x + s * 0.98, z: p.z, r: 0.24 };
+      return [box(0, 0, 0.59, 0.56), seat(-1), seat(1)];
+    }
+    const r = decorRect(p, -0.04);
+    return [{ kind: 'aabb', ...r }];
+  }
+
+  private colliderHitsRect(c: WorldCollider, r: Rect): boolean {
+    if (c.kind === 'aabb') return rectsOverlap(c, r);
+    const cx = THREE.MathUtils.clamp(c.x, r.minX, r.maxX);
+    const cz = THREE.MathUtils.clamp(c.z, r.minZ, r.maxZ);
+    return Math.hypot(c.x - cx, c.z - cz) < c.r;
+  }
+
+  /** Overlap with other furniture only (used when handing out default tables). */
+  private overlapsLayout(items: PlacedDecor[], cand: PlacedDecor): boolean {
+    const r = decorRect(cand, 0.02);
+    const flat = !!DECOR_BY_ID[cand.item].flat;
+    return items.some((o) => o.uid !== cand.uid && !!DECOR_BY_ID[o.item].flat === flat && rectsOverlap(r, decorRect(o)));
+  }
+
+  /**
+   * Why an item can't stand here (null = fine). Checks the room edges, walls, counters and
+   * machines, other furniture, the areas staff and guests need, and that every seat, the
+   * counter and the machines can still be reached from the door.
+   */
+  private placementProblem(items: PlacedDecor[], cand: PlacedDecor): string | null {
+    const def = DECOR_BY_ID[cand.item];
+    const r = decorRect(cand);
+    const d = this.diningRect;
+    if (r.minX < d.minX || r.maxX > d.maxX || r.minZ < d.minZ || r.maxZ > d.maxZ) return 'Keep it inside the dining room';
+    if (this.overlapsLayout(items, cand)) return def.flat ? "Rugs can't overlap" : 'Too close to another item';
+    if (def.flat) return null;
+    const inner = decorRect(cand, -0.03);
+    if (this.fixedRestaurantColliders.some((c) => this.colliderHitsRect(c, inner))) return 'Something is in the way';
+    if (this.keepClear.some((k) => rectsOverlap(k, inner))) return 'Keep the door, counter and machines clear';
+    // Can everyone still get everywhere?
+    const all = items.filter((o) => o.uid !== cand.uid).concat(cand);
+    const cols: WorldCollider[] = [];
+    for (const o of all) cols.push(...this.itemColliders(o));
+    for (const t of this.terraceSeating) cols.push(...this.itemColliders({ item: 'table_oak', x: t.x, z: t.z, rot: 0 }));
+    this.checkNav.rebuild(0.3, this.nearbyStaticColliders, this.fixedRestaurantColliders, cols);
+    const flood = this.checkNav.floodFrom(this.entrancePoint.x, this.entrancePoint.z);
+    const blocked = (x: number, z: number) => isPointBlocked(x, z, 0.25, this.fixedRestaurantColliders, cols);
+    for (const o of all) {
+      if (!isSeating(o.item)) continue;
+      const pts = seatingPoints(o);
+      for (const side of pts.aisles) {
+        if (!side.some((a) => !blocked(a.x, a.z) && this.checkNav.canReach(flood, a.x, a.z))) return 'This blocks the way to a seat';
+      }
+    }
+    for (const pt of this.serviceReachPoints) {
+      if (!this.checkNav.canReach(flood, pt.x, pt.z)) return 'This blocks the path to the counter';
+    }
+    return null;
+  }
+
+  /** A free, valid spot for a new item, searching outward from the middle of the dining room. */
+  private findFreeSpot(items: PlacedDecor[], item: DecorItemId, strict = true, rot = 0): { x: number; z: number } | null {
+    const d = this.diningRect;
+    const cx = snapToGrid((d.minX + d.maxX) / 2);
+    const cz = snapToGrid((d.minZ + d.maxZ) / 2);
+    const cands: { x: number; z: number; dist: number }[] = [];
+    for (let x = d.minX; x <= d.maxX; x += 0.5)
+      for (let z = d.minZ; z <= d.maxZ; z += 0.5) {
+        const sx = snapToGrid(x);
+        const sz = snapToGrid(z);
+        cands.push({ x: sx, z: sz, dist: Math.hypot(sx - cx, sz - cz) });
+      }
+    cands.sort((a, b) => a.dist - b.dist);
+    for (const c of cands) {
+      const cand: PlacedDecor = { uid: '__new', item, x: c.x, z: c.z, rot };
+      if (strict ? !this.placementProblem(items, cand) : !this.overlapsLayout(items, cand) && this.inDining(cand)) return { x: c.x, z: c.z };
+    }
+    return null;
+  }
+
+  private inDining(p: PlacedDecor): boolean {
+    const r = decorRect(p);
+    const d = this.diningRect;
+    return r.minX >= d.minX && r.maxX <= d.maxX && r.minZ >= d.minZ && r.maxZ <= d.maxZ;
+  }
+
+  /** The aisle spot a guest (or waiter) uses to reach a seat, preferring one reachable from the door. */
+  private seatApproach(tbl: SimTable, seatSide: number, prefer?: { x: number; z: number }) {
+    const pts = seatingPoints({ x: tbl.x, z: tbl.z, rot: tbl.alongZ ? 1 : 0, item: tbl.isVip ? 'booth_red' : 'table_oak' });
+    const seat = pts.seats[seatSide < 0 ? 0 : 1];
+    const opts = pts.aisles[seatSide < 0 ? 0 : 1].filter(
+      (a) =>
+        !isPointBlocked(a.x, a.z, 0.25, this.restaurantColliders) &&
+        (!this.reachFlood || this.navGrid.canReach(this.reachFlood, a.x, a.z))
     );
+    const list = opts.length ? opts : pts.aisles[seatSide < 0 ? 0 : 1];
+    let best = list[0];
+    if (prefer && list.length > 1) {
+      best = list.reduce((m, a) => (Math.hypot(a.x - prefer.x, a.z - prefer.z) < Math.hypot(m.x - prefer.x, m.z - prefer.z) ? a : m), list[0]);
+    } else if (list.length > 1) {
+      // Prefer the side toward the middle of the room
+      best = list.reduce((m, a) => (Math.abs(a.z) + Math.abs(a.x - this.entrancePoint.x) * 0.01 < Math.abs(m.z) + Math.abs(m.x - this.entrancePoint.x) * 0.01 ? a : m), list[0]);
+    }
+    return { seat, approach: best };
+  }
+
+  // =========================================================================
+  // Design mode controls
+  // =========================================================================
+
+  public isDesignMode(): boolean {
+    return this.designMode;
+  }
+
+  public setDesignMode(on: boolean) {
+    if (this.designMode === on) return;
+    this.designMode = on;
+    this.designDrag = null;
+    this.designPan = null;
+    this.designPointerId = null;
+    this.tapWalkTarget = null;
+    this.tapWaypoints = [];
+    this.joystickVec.set(0, 0);
+    if (on) {
+      const d = this.diningRect;
+      this.designFocus.set((d.minX + d.maxX) / 2, 0.6, (d.minZ + d.maxZ) / 2);
+      this.ensureDesignOverlay();
+    } else {
+      this.designSel = null;
+      // Step the chef out of any furniture that now stands where they were
+      this.resolveWorldCollision(this.playerPos, 0.32, true, false);
+      this.playerParts.root.position.copy(this.playerPos);
+    }
+    if (this.designGrid) this.designGrid.visible = on;
+    this.updateDesignMarker();
+    this.emitDesignSelection();
+  }
+
+  private ensureDesignOverlay() {
+    const d = this.diningRect;
+    const w = d.maxX - d.minX;
+    const h = d.maxZ - d.minZ;
+    if (this.designGrid) this.designGrid.removeFromParent();
+    // One canvas for the whole room (a repeated tiny tile fades away in mipmaps)
+    const PX = 48; // pixels per metre: a 0.5 m cell is 24 px
+    const c = document.createElement('canvas');
+    c.width = Math.ceil(w * PX);
+    c.height = Math.ceil(h * PX);
+    const x = c.getContext('2d')!;
+    x.fillStyle = 'rgba(56,189,248,0.12)';
+    x.fillRect(0, 0, c.width, c.height);
+    x.strokeStyle = 'rgba(30,64,120,0.5)';
+    x.lineWidth = 2;
+    x.beginPath();
+    for (let gx = 0; gx <= w + 1e-3; gx += 0.5) {
+      x.moveTo(gx * PX, 0);
+      x.lineTo(gx * PX, c.height);
+    }
+    for (let gz = 0; gz <= h + 1e-3; gz += 0.5) {
+      x.moveTo(0, gz * PX);
+      x.lineTo(c.width, gz * PX);
+    }
+    x.stroke();
+    x.strokeStyle = 'rgba(30,64,120,0.9)';
+    x.lineWidth = 6;
+    x.strokeRect(0, 0, c.width, c.height);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    this.designGrid = new THREE.Mesh(
+      new THREE.PlaneGeometry(w, h),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 })
+    );
+    this.designGrid.rotation.x = -Math.PI / 2;
+    this.designGrid.position.set((d.minX + d.maxX) / 2, 0.135, (d.minZ + d.maxZ) / 2);
+    this.designGrid.renderOrder = 3;
+    this.scene.add(this.designGrid);
+    if (!this.designMarker) {
+      this.designMarker = new THREE.Mesh(
+        new THREE.PlaneGeometry(1, 1),
+        new THREE.MeshBasicMaterial({ color: '#22c55e', transparent: true, opacity: 0.4, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6 })
+      );
+      this.designMarker.rotation.x = -Math.PI / 2;
+      this.designMarker.renderOrder = 4;
+      this.scene.add(this.designMarker);
+    }
+  }
+
+  private layoutItem(uid: string | null): PlacedDecor | undefined {
+    if (!uid) return undefined;
+    return this.saveRef.current.layout?.items.find((i) => i.uid === uid);
+  }
+
+  private tableForItem(p: PlacedDecor | undefined): SimTable | undefined {
+    if (!p || !isSeating(p.item)) return undefined;
+    return this.tables.find((t) => t.id === p.tableNo);
+  }
+
+  /** Guests sitting at (or walking to) this table: it can't be moved or sold right now. */
+  private itemBusy(p: PlacedDecor | undefined): boolean {
+    return !!this.tableForItem(p)?.occupiedBy;
+  }
+
+  private updateDesignMarker() {
+    if (!this.designMarker) return;
+    const p = this.layoutItem(this.designSel);
+    if (!this.designMode || !p) {
+      this.designMarker.visible = false;
+      return;
+    }
+    const drag = this.designDrag && this.designDrag.uid === p.uid ? this.designDrag : null;
+    const x = drag ? drag.candX : p.x;
+    const z = drag ? drag.candZ : p.z;
+    const r = decorRect({ item: p.item, x, z, rot: p.rot }, 0.06);
+    this.designMarker.visible = true;
+    this.designMarker.position.set(x, 0.14, z);
+    this.designMarker.scale.set(r.maxX - r.minX, r.maxZ - r.minZ, 1);
+    const bad = (drag && drag.reason) || this.itemBusy(p);
+    (this.designMarker.material as THREE.MeshBasicMaterial).color.set(bad ? '#ef4444' : '#22c55e');
+  }
+
+  private emitDesignSelection(reason?: string | null) {
+    const p = this.layoutItem(this.designSel);
+    this.callbacks.onDesignSelection?.(
+      this.designMode && p
+        ? {
+            uid: p.uid,
+            item: p.item,
+            busy: this.itemBusy(p),
+            problem: reason ?? (this.designDrag?.uid === p.uid ? this.designDrag.reason : null) ?? null,
+          }
+        : null
+    );
+  }
+
+  private floorPointAt(clientX: number, clientY: number): THREE.Vector3 | null {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    _ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    this.raycaster.setFromCamera(_ndc, this.camera);
+    const hit = new THREE.Vector3();
+    return this.raycaster.ray.intersectPlane(_floorPlane, hit) ? hit : null;
+  }
+
+  private pickLayoutItem(clientX: number, clientY: number): string | null {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    _ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    this.raycaster.setFromCamera(_ndc, this.camera);
+    const roots = [...this.layoutCache.entries()].filter(([uid]) => !uid.startsWith('terrace_')).map(([, e]) => e.root);
+    const hits = this.raycaster.intersectObjects(roots, true);
+    // Prefer furniture over rugs lying underneath it
+    let rugHit: string | null = null;
+    for (const h of hits) {
+      let o: THREE.Object3D | null = h.object;
+      while (o && !o.userData.decorUid) o = o.parent;
+      const uid = o?.userData.decorUid as string | undefined;
+      if (!uid) continue;
+      const p = this.layoutItem(uid);
+      if (p && DECOR_BY_ID[p.item].flat) {
+        rugHit = rugHit ?? uid;
+        continue;
+      }
+      if (h.object.type === 'Sprite') continue;
+      return uid;
+    }
+    if (rugHit) return rugHit;
+    // Fall back to footprints on the floor (easier to hit small items on a phone)
+    const fp = this.floorPointAt(clientX, clientY);
+    if (!fp) return null;
+    const items = this.saveRef.current.layout?.items ?? [];
+    const under = items.filter((i) => {
+      const r = decorRect(i, 0.15);
+      return fp.x >= r.minX && fp.x <= r.maxX && fp.z >= r.minZ && fp.z <= r.maxZ;
+    });
+    return (under.find((i) => !DECOR_BY_ID[i.item].flat) ?? under[0])?.uid ?? null;
+  }
+
+  private designPointerDown(e: PointerEvent) {
+    if (this.designPointerId !== null) return;
+    this.designPointerId = e.pointerId;
+    const uid = this.pickLayoutItem(e.clientX, e.clientY);
+    const fp = this.floorPointAt(e.clientX, e.clientY);
+    if (uid && fp) {
+      this.designSel = uid;
+      const p = this.layoutItem(uid)!;
+      this.designDrag = this.itemBusy(p)
+        ? null
+        : { uid, offX: p.x - fp.x, offZ: p.z - fp.z, startX: p.x, startZ: p.z, candX: p.x, candZ: p.z, reason: null, moved: false };
+      sound.playClick();
+    } else {
+      this.designSel = null;
+      this.designDrag = null;
+      this.designPan = fp ? { x: fp.x, z: fp.z } : null;
+    }
+    this.updateDesignMarker();
+    this.emitDesignSelection(uid && this.itemBusy(this.layoutItem(uid)) ? 'Guests are seated here' : null);
+  }
+
+  private designPointerMove(e: PointerEvent) {
+    if (e.pointerId !== this.designPointerId) return;
+    const fp = this.floorPointAt(e.clientX, e.clientY);
+    if (!fp) return;
+    if (this.designDrag) {
+      const drag = this.designDrag;
+      const nx = snapToGrid(fp.x + drag.offX);
+      const nz = snapToGrid(fp.z + drag.offZ);
+      if (nx === drag.candX && nz === drag.candZ) return;
+      drag.candX = nx;
+      drag.candZ = nz;
+      drag.moved = true;
+      const layout = this.saveRef.current.layout!;
+      const p = layout.items.find((i) => i.uid === drag.uid)!;
+      drag.reason = this.placementProblem(layout.items, { ...p, x: nx, z: nz });
+      const entry = this.layoutCache.get(drag.uid);
+      if (entry) entry.root.position.set(nx, 0.06, nz);
+      this.updateDesignMarker();
+      this.emitDesignSelection();
+    } else if (this.designPan) {
+      // Slide the view around the room
+      this.designFocus.x = THREE.MathUtils.clamp(this.designFocus.x - (fp.x - this.designPan.x) * 0.6, this.diningRect.minX - 2, this.diningRect.maxX + 2);
+      this.designFocus.z = THREE.MathUtils.clamp(this.designFocus.z - (fp.z - this.designPan.z) * 0.6, this.diningRect.minZ - 2, this.diningRect.maxZ + 2);
+    }
+  }
+
+  private designPointerUp(e: PointerEvent) {
+    if (e.pointerId !== this.designPointerId) return;
+    this.designPointerId = null;
+    this.designPan = null;
+    const drag = this.designDrag;
+    this.designDrag = null;
+    if (!drag || !drag.moved) {
+      this.updateDesignMarker();
+      return;
+    }
+    const layout = this.saveRef.current.layout!;
+    const entry = this.layoutCache.get(drag.uid);
+    if (drag.reason) {
+      // Not allowed there: slide back
+      if (entry) entry.root.position.set(drag.startX, 0, drag.startZ);
+      sound.playClick();
+      this.updateDesignMarker();
+      this.emitDesignSelection(drag.reason);
+      return;
+    }
+    if (entry) entry.root.position.y = 0;
+    this.commitLayout({
+      ...layout,
+      items: layout.items.map((i) => (i.uid === drag.uid ? { ...i, x: drag.candX, z: drag.candZ } : i)),
+    });
+    sound.playClick();
+    this.emitDesignSelection(null);
+  }
+
+  /** Turns the selected item a quarter. Returns a reason when it doesn't fit turned. */
+  public designRotate(): string | null {
+    const layout = this.saveRef.current.layout;
+    const p = this.layoutItem(this.designSel);
+    if (!layout || !p) return null;
+    if (this.itemBusy(p)) return 'Guests are seated here';
+    const cand = { ...p, rot: (p.rot + 1) % 4 };
+    const problem = this.placementProblem(layout.items, cand);
+    if (problem) {
+      this.emitDesignSelection(problem);
+      return problem;
+    }
+    this.commitLayout({ ...layout, items: layout.items.map((i) => (i.uid === p.uid ? cand : i)) });
+    this.emitDesignSelection(null);
+    return null;
+  }
+
+  /** Removes the selected item (the app pays back half its price). */
+  public designRemoveSelected(): { item: DecorItemId } | { problem: string } | null {
+    const layout = this.saveRef.current.layout;
+    const p = this.layoutItem(this.designSel);
+    if (!layout || !p) return null;
+    if (this.itemBusy(p)) return { problem: 'Guests are seated here' };
+    if (isSeating(p.item) && seatingCount(layout) <= 1) return { problem: 'Keep at least one table' };
+    this.designSel = null;
+    this.commitLayout({ ...layout, items: layout.items.filter((i) => i.uid !== p.uid) });
+    this.updateDesignMarker();
+    this.emitDesignSelection();
+    return { item: p.item };
+  }
+
+  /** Places a newly bought item in a free spot and selects it. */
+  public designAdd(item: DecorItemId): { uid: string } | { problem: string } {
+    const layout = this.saveRef.current.layout ?? createEmptyLayout();
+    const spot = this.findFreeSpot(layout.items, item, true) ?? this.findFreeSpot(layout.items, item, true, 1);
+    if (!spot) return { problem: 'No free space. Move or sell something first' };
+    const rot = this.placementProblem(layout.items, { uid: '__new', item, x: spot.x, z: spot.z, rot: 0 }) ? 1 : 0;
+    const placed: PlacedDecor = { uid: newDecorUid(), item, x: spot.x, z: spot.z, rot };
+    if (isSeating(item)) placed.tableNo = nextTableNo(layout);
+    this.designSel = placed.uid;
+    this.commitLayout({ ...layout, items: [...layout.items, placed] });
+    this.emitDesignSelection(null);
+    return { uid: placed.uid };
+  }
+
+  public designDeselect() {
+    this.designSel = null;
+    this.updateDesignMarker();
+    this.emitDesignSelection();
+  }
+
+  private updateDesignCamera(dt: number) {
+    const d = this.diningRect;
+    const aspect = this.camera.aspect || 1;
+    const span = Math.max(d.maxZ - d.minZ, (d.maxX - d.minX) / Math.max(0.45, aspect) * 0.8);
+    const dist = THREE.MathUtils.clamp(span * 1.25, 12, 34);
+    this.camTarget.x = THREE.MathUtils.damp(this.camTarget.x, this.designFocus.x, 8, dt);
+    this.camTarget.y = THREE.MathUtils.damp(this.camTarget.y, this.designFocus.y, 8, dt);
+    this.camTarget.z = THREE.MathUtils.damp(this.camTarget.z, this.designFocus.z, 8, dt);
+    this.updateCameraTransform(dt, dist, 1.1);
   }
 
   private rebuildHomeColliders(
@@ -2188,6 +2800,10 @@ export class RestaurantWorldEngine {
     const onPointerDown = (e: PointerEvent) => {
       sound.unlock();
       if (e.button !== 0 && e.pointerType === 'mouse') return;
+      if (this.designMode) {
+        this.designPointerDown(e);
+        return;
+      }
       activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (activePointers.size === 1) {
         camPointerId = e.pointerId;
@@ -2201,6 +2817,10 @@ export class RestaurantWorldEngine {
     };
 
     const onPointerMove = (e: PointerEvent) => {
+      if (this.designMode) {
+        this.designPointerMove(e);
+        return;
+      }
       if (!activePointers.has(e.pointerId)) return;
       activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
@@ -2229,6 +2849,11 @@ export class RestaurantWorldEngine {
     };
 
     const onPointerUp = (e: PointerEvent) => {
+      if (this.designMode) {
+        this.designPointerUp(e);
+        activePointers.delete(e.pointerId);
+        return;
+      }
       if (!activePointers.has(e.pointerId)) return;
       const wasCamPointer = e.pointerId === camPointerId;
       activePointers.delete(e.pointerId);
@@ -2863,7 +3488,8 @@ export class RestaurantWorldEngine {
         themeTipMult *
         prestigeTipMult *
         cashierTipMult *
-        streakMult
+        streakMult *
+        (1 + this.charmBonus.tips)
     );
 
     const repDelta =
@@ -2995,6 +3621,13 @@ export class RestaurantWorldEngine {
       this.camTarget.set(targetX, 1.4, targetZ);
       this.updateCameraTransform(dt, 20, 0.56);
       // Let a couple background customers exist on title screen
+      this.updateParticles(dt);
+      return;
+    }
+
+    // Design mode: the restaurant holds still while you rearrange it
+    if (this.designMode) {
+      this.updateDesignCamera(dt);
       this.updateParticles(dt);
       return;
     }
@@ -3720,10 +4353,10 @@ export class RestaurantWorldEngine {
     ) {
       if (guideCap !== null && this.guideSpawnNow) {
         this.guideSpawnNow = false;
-        this.spawnTimer = getCustomerSpawnInterval(save.restaurantLevel, save.reputation, helpers);
+        this.spawnTimer = getCustomerSpawnInterval(save.restaurantLevel, save.reputation, helpers) * (1 - this.charmBonus.guests);
         this.spawnCustomer({ archetype: 'regular' });
       } else {
-      this.spawnTimer = getCustomerSpawnInterval(save.restaurantLevel, save.reputation, helpers);
+      this.spawnTimer = getCustomerSpawnInterval(save.restaurantLevel, save.reputation, helpers) * (1 - this.charmBonus.guests);
       // About 4 in 10 guests drive in and use the parking lot (if a bay is free)
       const seed = Math.floor(Math.random() * 1000);
       const archetype = this.rollArchetype();
@@ -3876,7 +4509,7 @@ export class RestaurantWorldEngine {
         const order = this.orders.find((o) => o.id === c.orderId);
         if (order) {
           const mult = c.archetype === 'impatient' ? 1.45 : 1.0;
-          order.patience -= patienceDecayBase * mult * dt;
+          order.patience -= patienceDecayBase * mult * (1 - this.charmBonus.patience) * dt;
           if (order.patience <= 0) {
             this.orders = this.orders.filter((o) => o.id !== order.id);
             this.freeTable(c.tableId, false);
@@ -4111,16 +4744,10 @@ export class RestaurantWorldEngine {
       tbl.occupiedBy = id;
       tableId = tbl.id;
       seatSide = Math.random() > 0.5 ? -1 : 1;
-      const sx = tbl.x + seatSide * (tbl.isVip ? 0.88 : 0.96);
-      seatPos.set(sx, 0.1, tbl.z);
-
-      // Pick open aisle side (+Z or -Z) beside the assigned chair
-      const candPos = tbl.z + 0.96;
-      const candNeg = tbl.z - 0.96;
-      const posClear = !isPointBlocked(sx, candPos, 0.25, this.restaurantColliders);
-      const negClear = !isPointBlocked(sx, candNeg, 0.25, this.restaurantColliders);
-      const az = posClear && negClear ? (tbl.z > 0 ? candNeg : candPos) : posClear ? candPos : candNeg;
-      approachPos.set(sx, 0.1, az);
+      // The seat, and an open aisle spot beside it that can be reached from the door
+      const { seat, approach } = this.seatApproach(tbl, seatSide);
+      seatPos.set(seat.x, 0.1, seat.z);
+      approachPos.set(approach.x, 0.1, approach.z);
     } else {
       // Queue spots in front of the register (four with the Takeaway Counter)
       const slots = RestaurantWorldEngine.TAKEAWAY_SLOTS_X.slice(0, takeawayCap);
@@ -4194,17 +4821,23 @@ export class RestaurantWorldEngine {
 
   private pickTableServiceSpot(agent: SimStaff, tbl: SimTable): { x: number; z: number } {
     const pos = agent.mesh.root.position;
-    const candA = tbl.z + 1.02;
-    const candB = tbl.z - 1.02;
-    const aClear = !isPointBlocked(tbl.x, candA, 0.26, this.restaurantColliders);
-    const bClear = !isPointBlocked(tbl.x, candB, 0.26, this.restaurantColliders);
-    if (aClear && bClear) {
-      return {
-        x: tbl.x,
-        z: Math.abs(pos.z - candA) <= Math.abs(pos.z - candB) ? candA : candB,
-      };
-    }
-    return { x: tbl.x, z: aClear ? candA : candB };
+    // Beside the middle of the table, on the open side nearest the waiter
+    const cands = tbl.alongZ
+      ? [
+          { x: tbl.x + 1.02, z: tbl.z },
+          { x: tbl.x - 1.02, z: tbl.z },
+        ]
+      : [
+          { x: tbl.x, z: tbl.z + 1.02 },
+          { x: tbl.x, z: tbl.z - 1.02 },
+        ];
+    const open = cands.filter(
+      (c) =>
+        !isPointBlocked(c.x, c.z, 0.26, this.restaurantColliders) &&
+        (!this.reachFlood || this.navGrid.canReach(this.reachFlood, c.x, c.z))
+    );
+    const list = open.length ? open : cands;
+    return list.reduce((m, c) => (Math.hypot(c.x - pos.x, c.z - pos.z) < Math.hypot(m.x - pos.x, m.z - pos.z) ? c : m), list[0]);
   }
 
   private updateStaffAI(dt: number) {

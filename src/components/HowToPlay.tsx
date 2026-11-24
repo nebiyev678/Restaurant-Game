@@ -80,6 +80,16 @@ const topics = (isTouch: boolean, side: 'left' | 'right'): Topic[] => [
     ],
   },
   {
+    icon: '🎨',
+    title: 'Design your restaurant (level 5)',
+    points: [
+      'Tap Design in the bottom menu. The game pauses and you see the dining room from above.',
+      'Drag tables, booths, plants and decorations to move them. Turn rotates, the red button sells for half price.',
+      'Buy new furniture, floors and wallpaper from the tray at the bottom. Things can’t block the door, counter, machines or the way to a seat.',
+      'Decorations add Charm: a few more guests, tips and patience. Fast service and good dishes still matter most.',
+    ],
+  },
+  {
     icon: '🧽',
     title: 'Cleaning',
     points: [

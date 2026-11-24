@@ -31,6 +31,8 @@ import {
   getStaffAppearance,
 } from './models';
 import { createGableRoofMesh } from './oldTown';
+import { createDecorMesh } from './decorModels';
+import type { DecorItemId } from './decor';
 import type { ShotOptions } from './previewStudio';
 import type { RecipeId, SpecialtyLineId, StaffRole, StationType } from './types';
 
@@ -45,7 +47,8 @@ export type PreviewKind =
   | 'equipment'
   | 'franchise'
   | 'theme'
-  | 'zone';
+  | 'zone'
+  | 'decor';
 
 /** The player's base look (matches the in-game chef). */
 const PLAYER_LOOK = {
@@ -202,6 +205,8 @@ export function buildPreviewModel(kind: PreviewKind, id: string): THREE.Object3D
     }
     case 'furniture':
       return buildFurniture(id);
+    case 'decor':
+      return createDecorMesh(id as DecorItemId);
     case 'recipe':
       return createDishMesh(id as RecipeId);
     case 'line': {
@@ -261,6 +266,8 @@ export function previewShot(kind: PreviewKind, id: string): ShotOptions {
       return { yaw: 0.78, pitch: 0.42, padding: 0.82 };
     case 'franchise':
       return { yaw: 0.55, pitch: 0.3, padding: 0.86 };
+    case 'decor':
+      return { yaw: 0.6, pitch: 0.5, padding: 0.88 };
     default:
       return { yaw: 0.65, pitch: 0.38, padding: 0.9 };
   }
