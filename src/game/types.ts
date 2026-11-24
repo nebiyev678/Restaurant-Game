@@ -437,6 +437,8 @@ export interface SaveState {
   tutorialStep: number; // legacy 4-tip guide: 0..4, 5 = complete
   /** Guided beginner tutorial step (see game/tutorial.ts); TUTORIAL_DONE when finished or skipped. */
   guideStep: number;
+  /** Which side of the phone screen the movement joystick lives on. */
+  joystickSide: 'left' | 'right';
   isMuted: boolean;
   isMusicMuted: boolean;
   dailyLogin: {

@@ -54,7 +54,7 @@ export const GUIDE_STEPS: GuideStep[] = [
     icon: '🕹️',
     title: 'Walk around',
     body: {
-      touch: 'Put your thumb anywhere on the left side of the screen and drag to walk. You can also tap the floor to walk there.',
+      touch: 'Put your thumb anywhere on the {side} side of the screen and drag to walk. You can also tap the floor to walk there.',
       desktop: 'Walk with W A S D or the arrow keys. You can also click the floor to walk there.',
     },
     advance: 'move',

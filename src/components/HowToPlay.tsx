@@ -7,7 +7,7 @@ interface Topic {
   points: string[];
 }
 
-const topics = (isTouch: boolean): Topic[] => [
+const topics = (isTouch: boolean, side: 'left' | 'right'): Topic[] => [
   {
     icon: '🎯',
     title: 'The goal',
@@ -22,7 +22,7 @@ const topics = (isTouch: boolean): Topic[] => [
     title: 'Moving',
     points: isTouch
       ? [
-          'Drag on the left half of the screen to walk.',
+          `Drag on the ${side} half of the screen to walk (change the side in Settings).`,
           'Tap the floor to walk there, or tap a table to go to it.',
           'Near a machine, guest or table an action button appears: tap it to Cook, Serve or Clean.',
           'Pinch with two fingers to zoom the camera.',
@@ -111,12 +111,13 @@ const topics = (isTouch: boolean): Topic[] => [
 
 interface HowToPlayProps {
   isTouch: boolean;
+  joystickSide?: 'left' | 'right';
   onClose: () => void;
   onReplayTutorial: () => void;
 }
 
-export const HowToPlay: React.FC<HowToPlayProps> = ({ isTouch, onClose, onReplayTutorial }) => {
-  const list = topics(isTouch);
+export const HowToPlay: React.FC<HowToPlayProps> = ({ isTouch, joystickSide = 'left', onClose, onReplayTutorial }) => {
+  const list = topics(isTouch, joystickSide);
   const [i, setI] = useState(0);
   const t = list[i];
   return (
