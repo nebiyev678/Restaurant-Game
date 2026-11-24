@@ -40,6 +40,7 @@ import { DailyBonusModal } from './components/DailyBonusModal';
 import { QuickGoalChip } from './components/QuickGoalChip';
 import { GuideEdgePointer, TutorialGuide } from './components/TutorialGuide';
 import { HowToPlay } from './components/HowToPlay';
+import { FeatureLockedSheet } from './components/FeatureLockedSheet';
 import { GUIDE_STEPS, GuideAdvance, TUTORIAL_DONE } from './game/tutorial';
 import { GrandOpeningModal } from './components/GrandOpeningModal';
 import { RecipeAlbum, NewCardsToast } from './components/RecipeAlbum';
@@ -109,6 +110,10 @@ import {
   getFranchiseIncomePerMinute,
   getLocalDateKey,
   EXPANSIONS,
+  FEATURE_UNLOCKS,
+  FeatureId,
+  featuresUnlockedAt,
+  isFeatureUnlocked,
   getEffectiveTier,
   getExpansion,
   getExpansionBlocker,
@@ -209,6 +214,10 @@ function loadSavedState(): { state: SaveState; hasExisting: boolean } {
               : base.graphicsQuality,
         joystickSide: parsed.joystickSide === 'right' ? 'right' : 'left',
         // Expansions: older saves keep the dining room size they already grew into
+        // Menus already unlocked when this save was made don't get a NEW badge
+        seenFeatures: Array.isArray(parsed.seenFeatures)
+          ? parsed.seenFeatures
+          : (Object.keys(FEATURE_UNLOCKS) as FeatureId[]).filter((f) => isFeatureUnlocked(f, parsed.restaurantLevel ?? 1)),
         expansions: Array.isArray(parsed.expansions)
           ? parsed.expansions.filter((id) => EXPANSIONS.some((e) => e.id === id))
           : getLegacyDiningExpansions(parsed.restaurantLevel ?? 1),
@@ -452,6 +461,11 @@ export default function App() {
             sound.playLevelUp();
             haptic(HAPTIC.levelUp);
             const unlocked = EXPANSIONS.filter((e) => e.requiredLevel === nextLevel);
+            const newMenus = featuresUnlockedAt(nextLevel);
+            if (newMenus.length > 0) {
+              const f = FEATURE_UNLOCKS[newMenus[0]];
+              window.setTimeout(() => showToast(`🔓 ${f.title} unlocked!`, f.perks[0]), 2200);
+            }
             showToast(
               `Restaurant Level ${nextLevel}!`,
               unlocked.length > 0
@@ -546,6 +560,11 @@ export default function App() {
         );
       },
       onShopRequested: (tab, subTab) => {
+        // Shops around town open once their menu is unlocked
+        if ((tab === 'city' || tab === 'lifestyle') && !isFeatureUnlocked(tab, saveRef.current.restaurantLevel)) {
+          setLockedSheet(tab);
+          return;
+        }
         sound.playClick();
         setDrawerSubTab(subTab);
         setDrawerTab(tab);
@@ -846,6 +865,7 @@ export default function App() {
 
   // --- Guided beginner tutorial ---
   const [showHowTo, setShowHowTo] = useState(false);
+  const [lockedSheet, setLockedSheet] = useState<FeatureId | null>(null);
   const guideStep = save.guideStep ?? TUTORIAL_DONE;
   const guideDone = guideStep >= GUIDE_STEPS.length;
   const tutorialOn = !guideDone && screen === 'playing';
@@ -933,11 +953,12 @@ export default function App() {
           totalEarned: prev.totalEarned + r.duplicateCash,
         };
       });
-      if (result.newCards.length > 0) {
+      const albumOpen = isFeatureUnlocked('album', saveRef.current.restaurantLevel);
+      if (result.newCards.length > 0 && albumOpen) {
         haptic(HAPTIC.success);
         sound.playUnlock();
         setNewCards((q) => [...q, ...result.newCards]);
-      } else if (result.duplicateCash > 0) {
+      } else if (result.duplicateCash > 0 && albumOpen) {
         pushPopup(`Duplicate card +$${result.duplicateCash}`, 'sky');
       }
     },
@@ -2464,6 +2485,15 @@ export default function App() {
                     <button
                       key={item.id}
                       onClick={() => {
+                        const fid = item.id as FeatureId;
+                        if (!isFeatureUnlocked(fid, save.restaurantLevel)) {
+                          sound.playClick();
+                          setLockedSheet(fid);
+                          return;
+                        }
+                        if (!(save.seenFeatures ?? []).includes(fid)) {
+                          commitSave((p) => ({ ...p, seenFeatures: [...(p.seenFeatures ?? []), fid] }));
+                        }
                         if (item.id === 'album') {
                           setDrawerTab('none');
                           openAlbum();
@@ -2473,8 +2503,14 @@ export default function App() {
                         setDrawerSubTab(undefined);
                         setDrawerTab(active ? 'none' : (item.id as DrawerTab));
                       }}
-                      aria-label={item.label}
+                      aria-label={
+                        isFeatureUnlocked(item.id as FeatureId, save.restaurantLevel)
+                          ? item.label
+                          : `${item.label}, unlocks at level ${FEATURE_UNLOCKS[item.id as FeatureId].level}`
+                      }
                       className={`shrink-0 cursor-pointer transition-colors font-bold whitespace-nowrap ${
+                        isFeatureUnlocked(item.id as FeatureId, save.restaurantLevel) ? '' : 'opacity-45'
+                      } ${
                         compact
                           ? 'flex flex-col items-center justify-center gap-0.5 w-[43px] h-11 rounded-xl text-[9px]'
                           : 'flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs'
@@ -2482,18 +2518,40 @@ export default function App() {
                     >
                       <span className="relative">
                         <Icon className={`${compact ? 'w-[18px] h-[18px]' : 'w-4 h-4'} shrink-0`} />
+                        {!isFeatureUnlocked(item.id as FeatureId, save.restaurantLevel) && (
+                          <span className="absolute -bottom-1 -right-1.5 w-3.5 h-3.5 rounded-full bg-slate-700 border border-slate-950 flex items-center justify-center">
+                            <Lock className="w-2 h-2 text-amber-300" strokeWidth={3} />
+                          </span>
+                        )}
+                        {isFeatureUnlocked(item.id as FeatureId, save.restaurantLevel) &&
+                          FEATURE_UNLOCKS[item.id as FeatureId].level > 1 &&
+                          !(save.seenFeatures ?? []).includes(item.id) && (
+                            <span className="absolute -top-1.5 -right-3 px-1 rounded-full bg-emerald-500 text-white text-[8px] font-extrabold animate-pulse">
+                              NEW
+                            </span>
+                          )}
                         {item.id === 'missions' && claimableChallenges > 0 && (
                           <span className="absolute -top-1.5 -right-2 min-w-4 h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-extrabold flex items-center justify-center">
                             {claimableChallenges}
                           </span>
                         )}
-                        {item.id === 'album' && albumBadge > 0 && (
+                        {item.id === 'album' && albumBadge > 0 && isFeatureUnlocked('album', save.restaurantLevel) && (
                           <span className="absolute -top-1.5 -right-2 min-w-4 h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-extrabold flex items-center justify-center">
                             {albumBadge}
                           </span>
                         )}
                       </span>
-                      <span>{compact && item.id === 'restaurant' ? 'Cafe' : compact && item.id === 'lifestyle' ? 'Shop' : compact && item.id === 'settings' ? 'Setup' : item.label}</span>
+                      <span>
+                        {!isFeatureUnlocked(item.id as FeatureId, save.restaurantLevel)
+                          ? `Lv ${FEATURE_UNLOCKS[item.id as FeatureId].level}`
+                          : compact && item.id === 'restaurant'
+                            ? 'Cafe'
+                            : compact && item.id === 'lifestyle'
+                              ? 'Shop'
+                              : compact && item.id === 'settings'
+                                ? 'Setup'
+                                : item.label}
+                      </span>
                     </button>
                   );
                 })}
@@ -2620,6 +2678,9 @@ export default function App() {
       )}
       {tutorialOn && hud.guidePointer && !hud.guidePointer.onScreen && drawerTab === 'none' && !cookModal && (
         <GuideEdgePointer x={hud.guidePointer.x} y={hud.guidePointer.y} angle={hud.guidePointer.angle} />
+      )}
+      {lockedSheet && (
+        <FeatureLockedSheet feature={lockedSheet} restaurantLevel={save.restaurantLevel} xp={save.xp} onClose={() => setLockedSheet(null)} />
       )}
       {showHowTo && <HowToPlay isTouch={isTouch} joystickSide={save.joystickSide ?? 'left'} onClose={() => setShowHowTo(false)} onReplayTutorial={replayTutorial} />}
 

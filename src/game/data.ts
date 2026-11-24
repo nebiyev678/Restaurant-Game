@@ -1164,6 +1164,39 @@ export function getRestaurantTier(level: number): {
   return { tier: 1, title: 'Small Street-Food Bistro', tableCount: 3 };
 }
 
+/** Bottom-menu sections, unlocked one by one as the restaurant levels up. */
+export type FeatureId = 'kitchen' | 'missions' | 'restaurant' | 'staff' | 'album' | 'city' | 'lifestyle' | 'settings';
+
+export const FEATURE_UNLOCKS: Record<FeatureId, { level: number; title: string; icon: string; perks: string[] }> = {
+  kitchen: { level: 1, title: 'Kitchen', icon: '👨‍🍳', perks: ['Unlock new dishes', 'See every recipe and its machine'] },
+  missions: { level: 1, title: 'Missions', icon: '🏅', perks: ['Daily challenges', 'Achievements and rewards'] },
+  settings: { level: 1, title: 'Settings', icon: '⚙️', perks: ['Sound, graphics, joystick side', 'How to play'] },
+  restaurant: {
+    level: 2,
+    title: 'Cafe upgrades',
+    icon: '🏪',
+    perks: ['Upgrade machines so they cook faster', 'Build expansions: takeaway counter, terrace, bigger rooms', 'New interior styles'],
+  },
+  staff: { level: 3, title: 'Staff', icon: '🧑‍🍳', perks: ['Hire chefs who cook for you', 'Waiters who serve and clean tables', 'A manager and a cashier'] },
+  album: { level: 4, title: 'Recipe Album', icon: '📖', perks: ['Collect cards of dishes and sights', 'A full page adds +3% to every dish'] },
+  city: {
+    level: 5,
+    title: 'City',
+    icon: '🏙️',
+    perks: ['The Bank: move money into your own wallet', 'Fast travel around town', 'Food Street, the park and the town square'],
+  },
+  lifestyle: { level: 6, title: 'Shop', icon: '🛍️', perks: ['Clothes and outfits for your chef', 'Cars at Apex Motors', 'Buy and furnish a home'] },
+};
+
+export function isFeatureUnlocked(id: FeatureId, restaurantLevel: number): boolean {
+  return restaurantLevel >= FEATURE_UNLOCKS[id].level;
+}
+
+/** Features that unlock exactly at this level (for the level-up message). */
+export function featuresUnlockedAt(level: number): FeatureId[] {
+  return (Object.keys(FEATURE_UNLOCKS) as FeatureId[]).filter((id) => FEATURE_UNLOCKS[id].level === level && level > 1);
+}
+
 /** Size and table count of each restaurant tier. */
 export const TIER_INFO: Record<1 | 2 | 3 | 4 | 5, { title: string; tableCount: number }> = {
   1: { title: 'Small Street-Food Bistro', tableCount: 3 },
@@ -1954,6 +1987,7 @@ export function createInitialSaveState(): SaveState {
     hapticsEnabled: true,
     joystickSide: 'left',
     expansions: [],
+    seenFeatures: [],
     recipeMastery: {},
     dailyChallenges: { date: null, items: [], bonusClaimed: false },
     totalStars: 0,

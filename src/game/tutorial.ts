@@ -145,10 +145,10 @@ export const GUIDE_STEPS: GuideStep[] = [
   {
     id: 'money',
     icon: '💰',
-    title: 'Grow your restaurant',
+    title: 'Money & new menus',
     body: {
-      touch: 'Green money is the restaurant’s: spend it in Kitchen on new dishes and better machines, and in Staff to hire chefs and waiters. Blue money is your own wallet for clothes, cars and a home. Move money between them at the Bank.',
-      desktop: 'Green money is the restaurant’s: spend it in Kitchen on new dishes and better machines, and in Staff to hire chefs and waiters. Blue money is your own wallet for clothes, cars and a home. Move money between them at the Bank.',
+      touch: 'Green money is the restaurant’s: spend it in Kitchen on new dishes. As you level up, new menus unlock one by one: Cafe upgrades (Lv 2), Staff (Lv 3), the Album (Lv 4), City and the Bank (Lv 5) and the Shop (Lv 6). Tap a locked menu to see what’s inside.',
+      desktop: 'Green money is the restaurant’s: spend it in Kitchen on new dishes. As you level up, new menus unlock one by one: Cafe upgrades (Lv 2), Staff (Lv 3), the Album (Lv 4), City and the Bank (Lv 5) and the Shop (Lv 6). Tap a locked menu to see what’s inside.',
     },
     advance: 'button',
     target: null,

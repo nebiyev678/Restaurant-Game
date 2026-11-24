@@ -93,7 +93,8 @@ const topics = (isTouch: boolean, side: 'left' | 'right'): Topic[] => [
     points: [
       'Kitchen: unlock new dishes and upgrade machines so they cook faster.',
       'Staff: hire chefs (cook for you), waiters (serve and clean) and a manager.',
-      'Serving earns XP. New levels add tables and unlock machines.',
+      'Serving earns XP. Menus unlock as you level up: Cafe upgrades (Lv 2), Staff (Lv 3), Album (Lv 4), City (Lv 5), Shop (Lv 6).',
+      'Levels also make expansions available, like a terrace or a bigger dining room, which you build in Cafe → Expansions.',
       'At level 8 you can open your next restaurant in a new country. Old ones keep earning.',
     ],
   },
