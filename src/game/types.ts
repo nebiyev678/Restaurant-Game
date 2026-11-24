@@ -1,3 +1,4 @@
+import type { RestaurantLayout } from './decor';
 export type GameScreen = 'title' | 'playing' | 'paused';
 
 export type DrawerTab =
@@ -459,6 +460,8 @@ export interface SaveState {
   expansions: ExpansionId[];
   /** Menus the player has opened since they unlocked (drives the NEW badge). */
   seenFeatures: string[];
+  /** Interior design: furniture and decorations in the dining room, floor and wallpaper. */
+  layout?: RestaurantLayout;
   isMuted: boolean;
   isMusicMuted: boolean;
   dailyLogin: {
