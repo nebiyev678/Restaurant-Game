@@ -854,6 +854,11 @@ export default function App() {
   useEffect(() => {
     if (!tutorialOn || !guideDef) return;
     const adv = guideDef.advance;
+    // Keyboard/mouse players don't need a joystick side
+    if (adv === 'choose_side') {
+      if (!isTouch) advanceGuide(guideStep);
+      return;
+    }
     if (adv === 'move') {
       if (!moveStartRef.current) moveStartRef.current = { ...hud.playerPos };
       const d = Math.hypot(hud.playerPos.x - moveStartRef.current.x, hud.playerPos.z - moveStartRef.current.z);
@@ -869,7 +874,7 @@ export default function App() {
     } else if (adv === 'hold' && hud.heldRecipe) {
       advanceGuide(guideStep);
     }
-  }, [tutorialOn, guideDef, guideStep, hud.playerPos, hud.heldRecipe, hud.bubbles, advanceGuide]);
+  }, [tutorialOn, guideDef, guideStep, hud.playerPos, hud.heldRecipe, hud.bubbles, advanceGuide, isTouch]);
   const guideReady = guideDef?.advance === 'order' ? hud.activeOrders.length > 0 : true;
 
   // --- Recipe Album: cards drop from orders, chests and 3-star days ---
@@ -2564,6 +2569,10 @@ export default function App() {
           compact={compact}
           ready={guideReady}
           onNext={() => advanceGuide(guideStep)}
+          onChooseSide={(side) => {
+            commitSave((p) => ({ ...p, joystickSide: side }));
+            advanceGuide(guideStep);
+          }}
           onSkip={guideDef.advance === 'clean' ? () => advanceGuide(guideStep) : skipTutorial}
           skipLabel={guideDef.advance === 'clean' ? 'Skip this step' : 'Skip tutorial'}
           onHowToPlay={() => setShowHowTo(true)}
