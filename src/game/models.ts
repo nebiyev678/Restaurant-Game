@@ -844,6 +844,19 @@ export interface CharacterParts {
   trayMesh: THREE.Group;
   headGroup: THREE.Group;
   hairCrestGroup: THREE.Group;
+  /** Knee and elbow joints (children of the leg / arm pivots). */
+  leftKnee: THREE.Group;
+  rightKnee: THREE.Group;
+  leftElbow: THREE.Group;
+  rightElbow: THREE.Group;
+  /** Where hand-held tools attach. */
+  rightGrip: THREE.Group;
+  leftGrip: THREE.Group;
+  face: FaceRig;
+  /** Cached hand tools, built on first use. */
+  props: Partial<Record<HandProp, THREE.Object3D>>;
+  /** Smoothed animation state (speed blend, blinking, brows…). */
+  anim: CharacterAnimState;
   shirtMat: THREE.MeshStandardMaterial;
   pantsMat: THREE.MeshStandardMaterial;
   cuffMat: THREE.MeshStandardMaterial;
@@ -875,6 +888,258 @@ export interface CharacterOptions {
   hatColor?: string;
   watchColor?: string;
   scale?: number;
+}
+
+
+export type FaceExpression = 'happy' | 'neutral' | 'focused' | 'impatient' | 'angry' | 'delighted' | 'eating' | 'surprised';
+
+export type HandProp = 'spatula' | 'knife' | 'basket' | 'ladle' | 'shaker' | 'scoop' | 'cloth';
+
+export interface CharacterAnimState {
+  speed: number;
+  lean: number;
+  blinkT: number;
+  nextBlink: number;
+  browY: number;
+  browTilt: number;
+  chew: number;
+  time: number;
+  phase?: number;
+  lastNow?: number;
+}
+
+export interface FaceRig {
+  eyes: THREE.Mesh[];
+  catchlights: THREE.Mesh[];
+  happyEyes: THREE.Mesh[];
+  brows: THREE.Mesh[];
+  mouths: Record<'smile' | 'grin' | 'small' | 'flat' | 'frown' | 'open', THREE.Object3D>;
+  cheeks: THREE.Mesh[];
+}
+
+/** Eyes, brows and mouths on the head (front is +z). */
+function buildFaceRig(head: THREE.Group, hairMat: THREE.Material): FaceRig {
+  const eyeMat = new THREE.MeshStandardMaterial({ color: '#1b1310', roughness: 0.18 });
+  const catchMat = new THREE.MeshBasicMaterial({ color: '#ffffff' });
+  const lineMat = new THREE.MeshStandardMaterial({ color: '#2a1712', roughness: 0.5 });
+  const mouthMat = new THREE.MeshStandardMaterial({ color: '#7f1d1d', roughness: 0.55 });
+  const tongueMat = new THREE.MeshStandardMaterial({ color: '#fb7185', roughness: 0.6 });
+  const eyes: THREE.Mesh[] = [];
+  const catchlights: THREE.Mesh[] = [];
+  const happyEyes: THREE.Mesh[] = [];
+  const brows: THREE.Mesh[] = [];
+  for (const sx of [-0.088, 0.088]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.034, 12, 10), eyeMat);
+    eye.scale.set(0.86, 1.24, 0.55);
+    eye.position.set(sx, 0.022, 0.232);
+    eye.userData.base = eye.scale.clone();
+    const catchlight = new THREE.Mesh(new THREE.SphereGeometry(0.011, 6, 6), catchMat);
+    catchlight.position.set(sx + 0.01, 0.038, 0.25);
+    // Closed, smiling "^" eye for big joy
+    const happy = new THREE.Mesh(new THREE.TorusGeometry(0.028, 0.008, 6, 12, Math.PI), lineMat);
+    happy.position.set(sx, 0.012, 0.243);
+    happy.visible = false;
+    const brow = new THREE.Mesh(new THREE.CapsuleGeometry(0.013, 0.052, 4, 8), hairMat);
+    brow.rotation.z = Math.PI / 2 + (sx < 0 ? 0.12 : -0.12);
+    brow.position.set(sx, 0.08, 0.236);
+    brow.userData.side = sx < 0 ? -1 : 1;
+    head.add(eye, catchlight, happy, brow);
+    eyes.push(eye);
+    catchlights.push(catchlight);
+    happyEyes.push(happy);
+    brows.push(brow);
+  }
+
+  // Open smile (the classic look)
+  const smile = new THREE.Group();
+  const cavity = new THREE.Mesh(new THREE.SphereGeometry(0.046, 12, 8, 0, Math.PI, 0, Math.PI * 0.55), mouthMat);
+  cavity.scale.set(1.15, 0.85, 0.4);
+  cavity.rotation.x = Math.PI * 0.55;
+  cavity.position.set(0, -0.082, 0.228);
+  const tongue = new THREE.Mesh(new THREE.SphereGeometry(0.028, 8, 6), tongueMat);
+  tongue.scale.set(1.1, 0.6, 0.5);
+  tongue.position.set(0, -0.095, 0.235);
+  smile.add(cavity, tongue);
+  // Big grin: a wide open "D" mouth with a row of teeth and a tongue
+  const grin = new THREE.Group();
+  const grinMouth = new THREE.Mesh(new THREE.CircleGeometry(0.056, 20, Math.PI, Math.PI), mouthMat);
+  const teeth = new THREE.Mesh(new THREE.PlaneGeometry(0.084, 0.016), new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.4 }));
+  teeth.position.set(0, -0.009, 0.001);
+  const grinTongue = new THREE.Mesh(new THREE.CircleGeometry(0.026, 14, 0, Math.PI), tongueMat);
+  grinTongue.position.set(0, -0.05, 0.001);
+  grin.add(grinMouth, teeth, grinTongue);
+  grin.position.set(0, -0.066, 0.238);
+  grin.rotation.x = -0.32;
+  // Small closed smile
+  const small = new THREE.Mesh(new THREE.TorusGeometry(0.034, 0.009, 6, 14, Math.PI), lineMat);
+  small.rotation.z = Math.PI;
+  small.position.set(0, -0.07, 0.243);
+  // Flat, unimpressed line
+  const flat = new THREE.Mesh(new THREE.CapsuleGeometry(0.008, 0.05, 3, 6), lineMat);
+  flat.rotation.z = Math.PI / 2;
+  flat.position.set(0, -0.088, 0.24);
+  // Frown
+  const frown = new THREE.Mesh(new THREE.TorusGeometry(0.032, 0.009, 6, 14, Math.PI), lineMat);
+  frown.position.set(0, -0.112, 0.238);
+  // Round open mouth (chewing, surprise)
+  const open = new THREE.Mesh(new THREE.SphereGeometry(0.024, 10, 8), mouthMat);
+  open.scale.set(1, 1.1, 0.45);
+  open.position.set(0, -0.088, 0.234);
+  const mouths = { smile, grin, small, flat, frown, open };
+  for (const [k, m] of Object.entries(mouths)) {
+    m.visible = k === 'smile';
+    head.add(m);
+  }
+  const cheeks = head.children.filter((c) => (c as THREE.Mesh).isMesh && ((c as THREE.Mesh).material as THREE.MeshStandardMaterial).color?.getHexString() === 'f794a4') as THREE.Mesh[];
+  return { eyes, catchlights, happyEyes, brows, mouths, cheeks };
+}
+
+const EXPRESSIONS: Record<
+  FaceExpression,
+  { mouth: keyof FaceRig['mouths']; browY: number; browTilt: number; eyeY: number; happyEyes?: boolean }
+> = {
+  happy: { mouth: 'smile', browY: 0.086, browTilt: 0.14, eyeY: 1 },
+  neutral: { mouth: 'small', browY: 0.080, browTilt: 0.08, eyeY: 1 },
+  focused: { mouth: 'flat', browY: 0.072, browTilt: -0.18, eyeY: 0.72 },
+  impatient: { mouth: 'flat', browY: 0.074, browTilt: -0.24, eyeY: 0.9 },
+  angry: { mouth: 'frown', browY: 0.066, browTilt: -0.48, eyeY: 0.8 },
+  delighted: { mouth: 'grin', browY: 0.096, browTilt: 0.2, eyeY: 1, happyEyes: true },
+  eating: { mouth: 'open', browY: 0.084, browTilt: 0.16, eyeY: 1 },
+  surprised: { mouth: 'open', browY: 0.100, browTilt: 0.1, eyeY: 1.25 },
+};
+
+/** Moves the face toward an expression, blinks now and then, and chews while eating. */
+export function updateFace(parts: CharacterParts, expr: FaceExpression, dt: number) {
+  const f = parts.face;
+  const a = parts.anim;
+  if (!f) return;
+  const e = EXPRESSIONS[expr];
+  a.browY = THREE.MathUtils.damp(a.browY, e.browY, 10, dt);
+  a.browTilt = THREE.MathUtils.damp(a.browTilt, e.browTilt, 10, dt);
+  for (const b of f.brows) {
+    const side = b.userData.side as number;
+    b.position.y = a.browY;
+    b.rotation.z = Math.PI / 2 - side * a.browTilt;
+  }
+  // Blink every few seconds
+  a.nextBlink -= dt;
+  if (a.nextBlink <= 0) {
+    a.blinkT = 0.13;
+    a.nextBlink = 2.2 + Math.random() * 3.2;
+  }
+  a.blinkT = Math.max(0, a.blinkT - dt);
+  const blink = a.blinkT > 0 ? 0.12 : 1;
+  // Eating: happy closed eyes on every other chew
+  a.chew += dt * (expr === 'eating' ? 7 : 0);
+  const chewing = expr === 'eating';
+  const closedHappy = e.happyEyes || (chewing && Math.sin(a.chew * 0.5) > 0.6);
+  f.eyes.forEach((eye, i) => {
+    const base = eye.userData.base as THREE.Vector3;
+    eye.visible = !closedHappy;
+    eye.scale.set(base.x * (e.eyeY > 1 ? 1.15 : 1), base.y * e.eyeY * blink, base.z);
+    f.catchlights[i].visible = !closedHappy && blink === 1;
+    f.happyEyes[i].visible = closedHappy;
+  });
+  for (const [k, m] of Object.entries(f.mouths)) m.visible = k === e.mouth;
+  if (chewing) {
+    const c = 0.6 + Math.abs(Math.sin(a.chew)) * 0.7;
+    f.mouths.open.scale.set(1, 1.1 * c, 0.45);
+  } else {
+    f.mouths.open.scale.set(1, 1.1, 0.45);
+  }
+}
+
+/** Hand tools in the same chunky style as the characters. */
+function buildHandProp(kind: HandProp): THREE.Object3D {
+  const g = new THREE.Group();
+  const steel = new THREE.MeshStandardMaterial({ color: '#d7dee6', metalness: 0.85, roughness: 0.22 });
+  const wood = new THREE.MeshStandardMaterial({ color: '#8a5a33', roughness: 0.6 });
+  const black = new THREE.MeshStandardMaterial({ color: '#22262b', roughness: 0.45 });
+  const handle = (len: number, mat: THREE.Material) => {
+    const h = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.02, len, 8), mat);
+    h.rotation.x = Math.PI / 2;
+    h.position.z = len / 2;
+    return h;
+  };
+  switch (kind) {
+    case 'spatula': {
+      g.add(handle(0.2, black));
+      const neck = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.01, 0.09), steel);
+      neck.position.set(0, -0.012, 0.24);
+      neck.rotation.x = 0.25;
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.008, 0.12), steel);
+      blade.position.set(0, -0.03, 0.33);
+      g.add(neck, blade);
+      break;
+    }
+    case 'knife': {
+      g.add(handle(0.11, black));
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.05, 0.18), steel);
+      blade.position.set(0, -0.012, 0.2);
+      g.add(blade);
+      break;
+    }
+    case 'basket': {
+      g.add(handle(0.2, black));
+      const wire = new THREE.MeshStandardMaterial({ color: '#c9d1d9', metalness: 0.8, roughness: 0.3, wireframe: true });
+      const cage = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.1, 0.16, 3, 2, 3), wire);
+      cage.position.set(0, -0.03, 0.3);
+      const fries = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.06, 0.13), new THREE.MeshStandardMaterial({ color: '#f5c542', roughness: 0.6 }));
+      fries.position.set(0, -0.04, 0.3);
+      g.add(cage, fries);
+      break;
+    }
+    case 'ladle': {
+      const stick = handle(0.28, wood);
+      const bowl = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), steel);
+      bowl.position.set(0, -0.02, 0.3);
+      g.add(stick, bowl);
+      break;
+    }
+    case 'shaker': {
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.038, 0.16, 12), steel);
+      body.position.set(0, 0.06, 0.02);
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.045, 0.05, 12), steel);
+      cap.position.set(0, 0.165, 0.02);
+      g.add(body, cap);
+      break;
+    }
+    case 'scoop': {
+      g.add(handle(0.12, new THREE.MeshStandardMaterial({ color: '#f472b6', roughness: 0.4 })));
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.04, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2), steel);
+      head.rotation.x = Math.PI;
+      head.position.set(0, 0, 0.16);
+      const ball = new THREE.Mesh(new THREE.SphereGeometry(0.036, 10, 8), new THREE.MeshStandardMaterial({ color: '#fbcfe8', roughness: 0.7 }));
+      ball.position.set(0, 0.015, 0.16);
+      g.add(head, ball);
+      break;
+    }
+    case 'cloth': {
+      const cloth = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.02, 0.12), new THREE.MeshStandardMaterial({ color: '#7dd3fc', roughness: 0.9 }));
+      cloth.position.set(0, -0.02, 0.04);
+      g.add(cloth);
+      break;
+    }
+  }
+  g.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).castShadow = true;
+  });
+  // Tools are modelled along +z; turn them so they extend out of the fist along the forearm
+  const holder = new THREE.Group();
+  if (kind !== 'cloth') g.rotation.x = Math.PI / 2;
+  holder.add(g);
+  return holder;
+}
+
+/** Shows one tool in the right hand (null hides all). */
+export function setHandProp(parts: CharacterParts, kind: HandProp | null) {
+  if (!parts.rightGrip) return;
+  for (const [k, obj] of Object.entries(parts.props)) if (obj) obj.visible = k === kind;
+  if (kind && !parts.props[kind]) {
+    const obj = buildHandProp(kind);
+    parts.props[kind] = obj;
+    parts.rightGrip.add(obj);
+  }
 }
 
 export function createCharacterModel(opts: CharacterOptions = {}): CharacterParts {
@@ -947,37 +1212,54 @@ export function createCharacterModel(opts: CharacterOptions = {}): CharacterPart
   });
 
   // Sculpted Cuffed Trousers & Chunky High-Top Sneakers (hip pivot y = 0.62)
+  const kneeGroups: THREE.Group[] = [];
   const makeLeg = (xOffset: number) => {
     const legPivot = new THREE.Group();
     legPivot.position.set(xOffset, 0.62, 0);
 
-    const legMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.106, 0.28, 6, 12), pantsMat);
-    legMesh.position.y = -0.20;
-    legMesh.castShadow = true;
-    legPivot.add(legMesh);
+    // Thigh on the hip pivot; shin, cuff and shoe hang from a knee joint so walking bends naturally
+    const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(0.106, 0.12, 6, 12), pantsMat);
+    thigh.position.y = -0.1;
+    thigh.castShadow = true;
+    legPivot.add(thigh);
+
+    const knee = new THREE.Group();
+    knee.position.y = -0.22;
+    legPivot.add(knee);
+    kneeGroups.push(knee);
+    const kneeCap = new THREE.Mesh(new THREE.SphereGeometry(0.104, 12, 10), pantsMat);
+    knee.add(kneeCap);
+    const shin = new THREE.Mesh(new THREE.CapsuleGeometry(0.1, 0.08, 6, 12), pantsMat);
+    shin.position.y = -0.07;
+    shin.castShadow = true;
+    knee.add(shin);
+    // Everything below the knee is built relative to the old leg pivot, then shifted up by 0.22
+    const lower = new THREE.Group();
+    lower.position.y = 0.22;
+    knee.add(lower);
 
     const legCuff = new THREE.Mesh(new THREE.CylinderGeometry(0.118, 0.118, 0.065, 14), cuffMat);
     legCuff.position.y = -0.37;
     legCuff.castShadow = true;
-    legPivot.add(legCuff);
+    lower.add(legCuff);
 
     const ankleCollar = new THREE.Mesh(
       new THREE.CylinderGeometry(0.104, 0.112, 0.085, 14),
       whiteTrimMat
     );
     ankleCollar.position.y = -0.435;
-    legPivot.add(ankleCollar);
+    lower.add(ankleCollar);
 
     const shoeUpper = new THREE.Mesh(new THREE.CapsuleGeometry(0.108, 0.125, 6, 12), shoeMat);
     shoeUpper.rotation.x = Math.PI / 2;
     shoeUpper.position.set(0, -0.505, 0.045);
     shoeUpper.castShadow = true;
-    legPivot.add(shoeUpper);
+    lower.add(shoeUpper);
 
     const shoeTongue = new THREE.Mesh(new THREE.BoxGeometry(0.095, 0.04, 0.11), whiteTrimMat);
     shoeTongue.position.set(0, -0.455, 0.095);
     shoeTongue.rotation.x = 0.28;
-    legPivot.add(shoeTongue);
+    lower.add(shoeTongue);
 
     const shoeToe = new THREE.Mesh(
       new THREE.SphereGeometry(0.104, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.52),
@@ -985,13 +1267,13 @@ export function createCharacterModel(opts: CharacterOptions = {}): CharacterPart
     );
     shoeToe.rotation.x = Math.PI / 2;
     shoeToe.position.set(0, -0.515, 0.115);
-    legPivot.add(shoeToe);
+    lower.add(shoeToe);
 
     const shoeSole = new THREE.Mesh(new THREE.CapsuleGeometry(0.114, 0.145, 4, 12), whiteTrimMat);
     shoeSole.rotation.x = Math.PI / 2;
     shoeSole.scale.set(1.04, 1.0, 0.42);
     shoeSole.position.set(0, -0.572, 0.048);
-    legPivot.add(shoeSole);
+    lower.add(shoeSole);
 
     return legPivot;
   };
@@ -1230,6 +1512,8 @@ export function createCharacterModel(opts: CharacterOptions = {}): CharacterPart
 
   // Sculpted Capsule Arms with Rolled Short-Sleeve Cuffs & Warm Forearms
   const sleeveCuffMeshes: THREE.Mesh[] = [];
+  const elbowGroups: THREE.Group[] = [];
+  const handGrips: THREE.Group[] = [];
   const makeArm = (xOffset: number) => {
     const armPivot = new THREE.Group();
     armPivot.position.set(xOffset, 1.23, 0);
@@ -1253,19 +1537,30 @@ export function createCharacterModel(opts: CharacterOptions = {}): CharacterPart
     sleeveCuffMeshes.push(cuffRing);
     armPivot.add(cuffRing);
 
+    // Forearm and hand hang from an elbow joint
+    const elbow = new THREE.Group();
+    elbow.position.y = -0.2;
+    armPivot.add(elbow);
+    elbowGroups.push(elbow);
     const forearm = new THREE.Mesh(new THREE.CapsuleGeometry(0.068, 0.14, 6, 10), forearmMat);
-    forearm.position.y = -0.26;
+    forearm.position.y = -0.06;
     forearm.castShadow = true;
-    armPivot.add(forearm);
+    elbow.add(forearm);
 
     const hand = new THREE.Mesh(new THREE.SphereGeometry(0.078, 12, 10), skinMat);
-    hand.position.y = -0.39;
+    hand.position.y = -0.19;
     hand.castShadow = true;
-    armPivot.add(hand);
+    elbow.add(hand);
 
     const thumb = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 8), skinMat);
-    thumb.position.set(xOffset < 0 ? 0.055 : -0.055, -0.375, 0.045);
-    armPivot.add(thumb);
+    thumb.position.set(xOffset < 0 ? 0.055 : -0.055, -0.175, 0.045);
+    elbow.add(thumb);
+
+    // Tools (spatula, knife…) are held here
+    const grip = new THREE.Group();
+    grip.position.set(0, -0.2, 0.03);
+    elbow.add(grip);
+    handGrips.push(grip);
 
     return armPivot;
   };
@@ -1281,9 +1576,9 @@ export function createCharacterModel(opts: CharacterOptions = {}): CharacterPart
     roughness: 0.16,
   });
   const watchMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.082, 0.082, 0.05, 12), watchMat);
-  watchMesh.position.y = -0.32;
+  watchMesh.position.y = -0.12;
   watchMesh.visible = Boolean(opts.watchColor);
-  leftArm.add(watchMesh);
+  elbowGroups[0].add(watchMesh);
 
   // Carry Tray Anchor poised above right palm for Serving Pose
   const carryAnchor = new THREE.Group();
@@ -1337,41 +1632,8 @@ export function createCharacterModel(opts: CharacterOptions = {}): CharacterPart
     headGroup.add(cheek);
   }
 
-  // Expressive Dark Oval Eyes with Crisp Catchlights & Eyebrows
-  const eyeMat = new THREE.MeshStandardMaterial({ color: '#1b1310', roughness: 0.18 });
-  const catchMat = new THREE.MeshBasicMaterial({ color: '#ffffff' });
-  for (const sx of [-0.088, 0.088]) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.034, 12, 10), eyeMat);
-    eye.scale.set(0.86, 1.24, 0.55);
-    eye.position.set(sx, 0.022, 0.232);
-
-    const catchlight = new THREE.Mesh(new THREE.SphereGeometry(0.011, 6, 6), catchMat);
-    catchlight.position.set(sx + 0.01, 0.038, 0.25);
-
-    const brow = new THREE.Mesh(new THREE.CapsuleGeometry(0.013, 0.052, 4, 8), hairMat);
-    brow.rotation.z = Math.PI / 2 + (sx < 0 ? 0.12 : -0.12);
-    brow.position.set(sx, 0.092, 0.228);
-
-    headGroup.add(eye, catchlight, brow);
-  }
-
-  // Cheerful Open Smile Mouth
-  const mouthCavity = new THREE.Mesh(
-    new THREE.SphereGeometry(0.046, 12, 8, 0, Math.PI, 0, Math.PI * 0.55),
-    new THREE.MeshStandardMaterial({ color: '#7f1d1d', roughness: 0.55 })
-  );
-  mouthCavity.scale.set(1.15, 0.85, 0.4);
-  mouthCavity.rotation.x = Math.PI * 0.55;
-  mouthCavity.position.set(0, -0.082, 0.228);
-  headGroup.add(mouthCavity);
-
-  const tongue = new THREE.Mesh(
-    new THREE.SphereGeometry(0.028, 8, 6),
-    new THREE.MeshStandardMaterial({ color: '#fb7185', roughness: 0.6 })
-  );
-  tongue.scale.set(1.1, 0.6, 0.5);
-  tongue.position.set(0, -0.095, 0.235);
-  headGroup.add(tongue);
+  // Expressive face: eyes that blink and squint, happy ^ ^ eyes, moving brows and several mouths
+  const face = buildFaceRig(headGroup, hairMat);
 
   // Sculpted Swept-Back Wavy Hair
   const hairBase = new THREE.Mesh(
@@ -1446,6 +1708,15 @@ export function createCharacterModel(opts: CharacterOptions = {}): CharacterPart
     trayMesh,
     headGroup,
     hairCrestGroup,
+    leftKnee: kneeGroups[0],
+    rightKnee: kneeGroups[1],
+    leftElbow: elbowGroups[0],
+    rightElbow: elbowGroups[1],
+    rightGrip: handGrips[1],
+    leftGrip: handGrips[0],
+    face,
+    props: {},
+    anim: { speed: 0, lean: 0, blinkT: 0, nextBlink: 2 + Math.random() * 3, browY: 0.08, browTilt: 0.12, chew: 0, time: Math.random() * 10 },
     shirtMat,
     pantsMat,
     cuffMat,
