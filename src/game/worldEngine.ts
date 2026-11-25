@@ -1,3 +1,5 @@
+import type { ClothingItem } from './types';
+import { ChefRig, applyChefOutfit, chefCarryPoint, loadChefRig, triggerChefServe, triggerChefSurprise, updateChefRig } from './glbChef';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { sound } from './audio';
@@ -146,6 +148,7 @@ import {
   WorldCollider,
   applyCharacterKinematics,
   COOK_STYLE_BY_STATION,
+  PROP_BY_STYLE,
   computeNpcSteering,
   isPointBlocked,
   resolveColliderList,
@@ -311,6 +314,7 @@ export class RestaurantWorldEngine {
 
   private frameId = 0;
   private disposed = false;
+  private static readonly CHEF_SCALE = 1.0;
   private clock = new THREE.Clock();
   private paused = false;
   private titleMode = true;
@@ -323,6 +327,9 @@ export class RestaurantWorldEngine {
 
   // Player & Vehicle
   private playerParts!: CharacterParts;
+  /** The rigged 3D mascot chef (null until the model has loaded; the simple chef shows meanwhile). */
+  private chefRig: ChefRig | null = null;
+  private lastClothes: { outfit: ClothingItem; hat: ClothingItem } | null = null;
   private playerPos = new THREE.Vector3(-2.4, 0, 1.0);
   private playerVel = new THREE.Vector3();
   private playerYaw = 0;
@@ -538,6 +545,11 @@ export class RestaurantWorldEngine {
     this.syncDynamicWorld(true);
     this.bindEvents();
     this.startLoop();
+    loadChefRig()
+      .then((rig) => {
+        if (!this.disposed) this.attachChefRig(rig);
+      })
+      .catch((err) => console.warn('Chef model failed to load, keeping the simple chef', err));
     // Detailed food models arrive a moment later: refresh dishes already on screen
     loadFoodModels().then(() => {
       if (this.disposed) return;
@@ -1310,6 +1322,8 @@ export class RestaurantWorldEngine {
       const watch =
         CLOTHING_CATALOG.find((c) => c.id === save.equippedWatchId) ?? CLOTHING_CATALOG[10];
       applyPlayerClothes(this.playerParts, outfit, hat, watch);
+      this.lastClothes = { outfit, hat };
+      if (this.chefRig) applyChefOutfit(this.chefRig, outfit, hat, this.playerParts.hatAnchor);
     }
 
     // 3. Update Home & Furniture
@@ -3252,6 +3266,17 @@ export class RestaurantWorldEngine {
     this.syncDynamicWorld(true);
   }
 
+  /** Swaps the simple player body for the rigged 3D mascot chef once it has loaded. */
+  private attachChefRig(rig: ChefRig) {
+    const root = this.playerParts.root;
+    const keep = new Set<THREE.Object3D>([root.children[0], this.playerParts.carryAnchor]);
+    for (const child of root.children) if (!keep.has(child)) child.visible = false;
+    rig.root.scale.setScalar(RestaurantWorldEngine.CHEF_SCALE);
+    root.add(rig.root);
+    this.chefRig = rig;
+    if (this.lastClothes) applyChefOutfit(rig, this.lastClothes.outfit, this.lastClothes.hat, this.playerParts.hatAnchor);
+  }
+
   public clearHeldDish() {
     if (this.heldDishMesh) {
       this.playerParts.carryAnchor.remove(this.heldDishMesh);
@@ -3303,6 +3328,7 @@ export class RestaurantWorldEngine {
       if (!this.takeFromStation(prompt.stationType)) this.callbacks.onCookRequested(prompt.stationType, null);
     } else if (prompt.actionType === 'trash') {
       this.trashHeldDish();
+      if (this.chefRig) triggerChefSurprise(this.chefRig);
     }
   }
 
@@ -3504,6 +3530,7 @@ export class RestaurantWorldEngine {
     const quality = this.heldQuality;
     this.clearHeldDish();
     this.deliverItem(order, recipe, quality);
+    if (this.chefRig) triggerChefServe(this.chefRig);
   }
 
   private serveTakeawayByPlayer() {
@@ -3514,6 +3541,7 @@ export class RestaurantWorldEngine {
     const quality = this.heldQuality;
     this.clearHeldDish();
     this.deliverItem(order, recipe, quality);
+    if (this.chefRig) triggerChefServe(this.chefRig);
   }
 
   private cleanTableByPlayer(tableId: number) {
@@ -4127,7 +4155,21 @@ export class RestaurantWorldEngine {
       // Smoothly follow the ground (steps, kerbs); the walk bob is added on top
       const targetGroundY = this.getGroundHeight(this.playerPos.x, this.playerPos.z);
       this.playerGroundY = THREE.MathUtils.damp(this.playerGroundY, targetGroundY, 18, dt);
-      applyCharacterKinematics({
+      if (this.chefRig) {
+        updateChefRig(this.chefRig, {
+          dt,
+          moving,
+          carrying: Boolean(this.heldRecipe),
+          cookProp: cookAt ? PROP_BY_STYLE[COOK_STYLE_BY_STATION[cookAt.type]] : null,
+          expression: this.playerJoy > 0 ? 'delighted' : cookAt ? 'focused' : 'jolly',
+        });
+        this.playerParts.root.position.y = this.playerGroundY;
+        this.playerParts.trayMesh.visible = Boolean(this.heldRecipe);
+        this.playerParts.root.updateMatrixWorld(true);
+        chefCarryPoint(this.chefRig, this.playerParts.root, this.playerParts.carryAnchor.position);
+        this.playerParts.carryAnchor.position.y += 0.05;
+        this.playerParts.carryAnchor.position.z += 0.06;
+      } else applyCharacterKinematics({
         parts: this.playerParts,
         walkPhase: this.playerWalkPhase,
         speedRatio: moving ? 1 : 0,
@@ -4155,6 +4197,7 @@ export class RestaurantWorldEngine {
           const quality = this.heldQuality;
           this.clearHeldDish();
           this.deliverItem(order, recipe, quality);
+          if (this.chefRig) triggerChefServe(this.chefRig);
           break;
         }
       }

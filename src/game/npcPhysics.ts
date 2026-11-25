@@ -552,7 +552,7 @@ export const COOK_STYLE_BY_STATION: Record<string, CookStyle> = {
   specialty: 'scoop',
 };
 
-const PROP_BY_STYLE: Record<CookStyle, HandProp> = {
+export const PROP_BY_STYLE: Record<CookStyle, HandProp> = {
   flip: 'spatula',
   chop: 'knife',
   shake: 'basket',
