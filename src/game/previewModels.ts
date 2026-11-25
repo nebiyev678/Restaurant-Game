@@ -11,6 +11,7 @@ import {
   FRANCHISE_CATALOG,
   HOUSE_CATALOG,
   RECIPE_LIST,
+  RECIPES,
   VEHICLE_CATALOG,
 } from './data';
 import {
@@ -34,6 +35,16 @@ import { createGableRoofMesh } from './oldTown';
 import { createDecorMesh } from './decorModels';
 import type { DecorItemId } from './decor';
 import type { ShotOptions } from './previewStudio';
+
+/** Badge colours behind dish icons, one per machine (warm for hot food, cool for drinks). */
+const FOOD_BADGES: Record<StationType, [string, string]> = {
+  grill: ['#fff0dc', '#ff9b54'],
+  fryer: ['#fffbe0', '#ffc531'],
+  oven: ['#ffe6df', '#ff7461'],
+  prep: ['#eefbe3', '#78cc5f'],
+  bar: ['#e6f7ff', '#4fb3ee'],
+  specialty: ['#ffecf6', '#f27fbf'],
+};
 import type { RecipeId, SpecialtyLineId, StaffRole, StationType } from './types';
 
 export type PreviewKind =
@@ -207,8 +218,15 @@ export function buildPreviewModel(kind: PreviewKind, id: string): THREE.Object3D
       return buildFurniture(id);
     case 'decor':
       return createDecorMesh(id as DecorItemId);
-    case 'recipe':
-      return createDishMesh(id as RecipeId);
+    case 'recipe': {
+      // Frame the icon on the food: the plate may run off the edge of the badge
+      const dish = createDishMesh(id as RecipeId);
+      const food = dish.children.slice(1).filter((c) => (c as THREE.Mesh).isMesh || c.children.length);
+      if (food.length) dish.userData.frameOn = food;
+      // A slightly smaller plate lets more of the colourful badge show around it
+      dish.children[0]?.scale.multiplyScalar(0.8);
+      return dish;
+    }
     case 'line': {
       const first = RECIPE_LIST.find((r) => r.recipeLine === (id as SpecialtyLineId));
       return createDishMesh(first?.id ?? 'dessert');
@@ -258,8 +276,11 @@ export function previewShot(kind: PreviewKind, id: string): ShotOptions {
     case 'zone':
       return { yaw: 0.6, pitch: 0.55, padding: 0.86 };
     case 'recipe':
-    case 'line':
-      return { yaw: 0.4, pitch: 0.72, padding: 0.9 };
+    case 'line': {
+      // Food icons: a bit lower so the food's height shows, zoomed in, on a colour badge per machine
+      const recipe = kind === 'recipe' ? RECIPES[id as RecipeId] : RECIPE_LIST.find((r) => r.recipeLine === (id as SpecialtyLineId));
+      return { yaw: 0.5, pitch: 0.55, padding: 1.12, backdrop: FOOD_BADGES[recipe?.station ?? 'prep'] };
+    }
     case 'staff':
       return { yaw: 0.35, pitch: 0.12, padding: 0.86 };
     case 'theme':
