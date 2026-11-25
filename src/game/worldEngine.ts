@@ -74,6 +74,7 @@ import {
 } from './data';
 import {
   CharacterParts,
+  FaceExpression,
   DiningTableParts,
   VehicleParts,
   applyPlayerClothes,
@@ -144,6 +145,7 @@ import {
   RestaurantNavGrid,
   WorldCollider,
   applyCharacterKinematics,
+  COOK_STYLE_BY_STATION,
   computeNpcSteering,
   isPointBlocked,
   resolveColliderList,
@@ -164,6 +166,8 @@ const _steer2D = new THREE.Vector2();
 
 interface SimCustomer {
   id: string;
+  /** How the visit went (shown on their face as they leave). */
+  mood?: 'happy' | 'angry';
   name: string;
   archetype: CustomerArchetype;
   mesh: CharacterParts;
@@ -323,6 +327,9 @@ export class RestaurantWorldEngine {
   private playerVel = new THREE.Vector3();
   private playerYaw = 0;
   private playerWalkPhase = 0;
+  /** Seconds of a big happy grin (after a perfect dish or a tip). */
+  private playerJoy = 0;
+  private playerGroundY = 0;
   private tapWalkTarget: THREE.Vector3 | null = null;
   private tapWaypoints: NavWaypoint[] = [];
   private tapWaypointIdx = 0;
@@ -701,6 +708,7 @@ export class RestaurantWorldEngine {
     const job = this.perfectJobAt(type);
     if (!job) return false;
     job.perfectHit = true;
+    this.playerJoy = 1.6;
     job.quality = Math.min(RestaurantWorldEngine.MAX_QUALITY, job.quality + 0.15);
     const st = this.stations.find((s) => s.type === type);
     if (st) this.spawnBurst(st.mx + (st.x - st.mx) * 0.22, 1.4, st.mz + (st.z - st.mz) * 0.22, '#facc15', 14);
@@ -3631,6 +3639,7 @@ export class RestaurantWorldEngine {
         cust.eatTimer = 4.0 + (order.items.length - 1) * 1.5;
       }
       this.spawnBurst(tbl?.x ?? 0, 1.2, tbl?.z ?? 0, '#10b981', 10 + order.items.length * 4);
+      this.playerJoy = 1.2;
       this.callbacks.onOrderServed(order.items[0], baseSale, tip, repDelta, xpGain, {
         x: tbl?.x ?? 0,
         y: 1.9,
@@ -3641,6 +3650,7 @@ export class RestaurantWorldEngine {
         this.sendCustomerToExit(cust);
       }
       this.spawnBurst(this.registerPos.x, 1.3, this.registerPos.z, '#10b981', 10);
+      this.playerJoy = 1.2;
       this.callbacks.onOrderServed(order.items[0], baseSale, tip, repDelta, xpGain, {
         x: this.registerPos.x,
         y: 2.0,
@@ -4079,16 +4089,43 @@ export class RestaurantWorldEngine {
         this.playerYaw = this.lerpAngle(this.playerYaw, targetYaw, 14 * dt);
         this.playerWalkPhase += dt * 13;
       } else {
-        this.playerWalkPhase = 0;
         this.stuckTapTimer = 0;
         this.playerVel.set(0, 0, 0);
         // Gently separate even if an NPC walks right into stationary player
         this.resolveWorldCollision(this.playerPos, 0.32, true, true);
       }
-      this.animateCharacterLimbs(this.playerParts, this.playerWalkPhase, Boolean(this.heldRecipe));
+      // The chef works the machine while a dish cooks in front of them
+      let cookAt: { type: StationType; mx: number; mz: number } | null = null;
+      if (!moving && !this.heldRecipe) {
+        for (const job of this.cookJobs.values()) {
+          if (job.done) continue;
+          const st = this.stations.find((x) => x.type === job.type);
+          if (st && Math.hypot(this.playerPos.x - st.x, this.playerPos.z - st.z) < 0.95) {
+            cookAt = st;
+            break;
+          }
+        }
+      }
+      if (cookAt) this.playerYaw = this.lerpAngle(this.playerYaw, Math.atan2(cookAt.mx - this.playerPos.x, cookAt.mz - this.playerPos.z), 10 * dt);
+      this.playerJoy = Math.max(0, this.playerJoy - dt);
+      // Smoothly follow the ground (steps, kerbs); the walk bob is added on top
       const targetGroundY = this.getGroundHeight(this.playerPos.x, this.playerPos.z);
-      const nextY = THREE.MathUtils.damp(this.playerParts.root.position.y, targetGroundY, 18, dt);
-      this.playerParts.root.position.set(this.playerPos.x, nextY, this.playerPos.z);
+      this.playerGroundY = THREE.MathUtils.damp(this.playerGroundY, targetGroundY, 18, dt);
+      applyCharacterKinematics({
+        parts: this.playerParts,
+        walkPhase: this.playerWalkPhase,
+        speedRatio: moving ? 1 : 0,
+        carrying: Boolean(this.heldRecipe),
+        sitBlend: 0,
+        pose: cookAt ? 'cooking' : 'locomotion',
+        activityTime: performance.now() / 1000,
+        seedOffset: 0,
+        baseGroundY: this.playerGroundY,
+        expression: this.playerJoy > 0 ? 'delighted' : cookAt ? 'focused' : 'happy',
+        cookStyle: cookAt ? COOK_STYLE_BY_STATION[cookAt.type] : undefined,
+      });
+      this.playerParts.root.position.x = this.playerPos.x;
+      this.playerParts.root.position.z = this.playerPos.z;
       this.playerParts.root.rotation.y = this.playerYaw;
     }
 
@@ -4221,24 +4258,6 @@ export class RestaurantWorldEngine {
         resolveColliderList(pos, radius, this.restaurantColliders);
         resolveColliderList(pos, radius, this.homeColliders);
       }
-    }
-  }
-
-  private animateCharacterLimbs(parts: CharacterParts, phase: number, carrying: boolean) {
-    const swing = phase > 0 ? Math.sin(phase) * 0.65 : 0;
-    parts.leftLeg.rotation.x = swing;
-    parts.rightLeg.rotation.x = -swing;
-    parts.trayMesh.visible = carrying;
-    if (carrying) {
-      parts.leftArm.rotation.x = -swing * 0.72;
-      parts.leftArm.rotation.z = 0;
-      parts.rightArm.rotation.x = -2.15 + Math.sin(phase) * 0.04;
-      parts.rightArm.rotation.z = 0.30;
-    } else {
-      parts.leftArm.rotation.x = -swing * 0.75;
-      parts.leftArm.rotation.z = 0;
-      parts.rightArm.rotation.x = swing * 0.75;
-      parts.rightArm.rotation.z = 0;
     }
   }
 
@@ -4657,6 +4676,7 @@ export class RestaurantWorldEngine {
           seedOffset: c.seedOffset,
           impatient: c.archetype === 'impatient',
           baseGroundY: this.getGroundHeight(pos.x, pos.z),
+          expression: this.waitingFace(c),
         });
 
         const order = this.orders.find((o) => o.id === c.orderId);
@@ -4669,6 +4689,7 @@ export class RestaurantWorldEngine {
             if (!this.titleMode) {
               sound.playCustomerUnhappy();
             }
+            c.mood = 'angry';
             this.callbacks.onOrderFailed(-0.08);
             this.breakStreak();
             if (isSeated) {
@@ -4691,8 +4712,10 @@ export class RestaurantWorldEngine {
           activityTime: c.activityTime,
           seedOffset: c.seedOffset,
           baseGroundY: 0.1,
+          expression: 'eating',
         });
         if (c.eatTimer <= 0) {
+          c.mood = 'happy';
           this.freeTable(c.tableId, true);
           c.state = 'standing_up';
         }
@@ -4716,6 +4739,7 @@ export class RestaurantWorldEngine {
           activityTime: c.activityTime,
           seedOffset: c.seedOffset,
           baseGroundY: 0.1,
+          expression: c.mood === 'angry' ? 'angry' : 'delighted',
         });
 
         if (c.sitBlend <= 0.05 && Math.hypot(pos.x - c.approachPos.x, pos.z - c.approachPos.z) < 0.2) {
@@ -4768,6 +4792,7 @@ export class RestaurantWorldEngine {
           activityTime: c.activityTime,
           seedOffset: c.seedOffset,
           baseGroundY: groundY,
+          expression: c.mood === 'angry' ? 'angry' : 'happy',
         });
 
         if (res.reachedFinal || pos.x > 9.9) {
@@ -4781,6 +4806,16 @@ export class RestaurantWorldEngine {
         }
       }
     }
+  }
+
+  /** A waiting guest's face: content at first, then impatient, then cross as patience runs out. */
+  private waitingFace(c: SimCustomer): FaceExpression {
+    const order = this.orders.find((o) => o.id === c.orderId);
+    const pat = order ? order.patience : 100;
+    if (pat > 62) return 'happy';
+    if (pat > 40) return 'neutral';
+    if (pat > 18) return 'impatient';
+    return 'angry';
   }
 
   private createCustomerOrder(c: SimCustomer) {
@@ -5097,6 +5132,8 @@ export class RestaurantWorldEngine {
         activityTime: agent.activityTime,
         seedOffset: agent.seedOffset,
         baseGroundY: this.getGroundHeight(pos.x, pos.z),
+        cookStyle: agent.cookingRecipe ? COOK_STYLE_BY_STATION[RECIPES[agent.cookingRecipe].station] : undefined,
+        expression: agent.poseMode === 'cooking' ? 'focused' : agent.poseMode === 'cleaning' ? 'neutral' : 'happy',
       });
 
       if (agent.role === 'chef') {
