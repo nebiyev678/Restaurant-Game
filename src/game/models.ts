@@ -1053,7 +1053,7 @@ export function updateFace(parts: CharacterParts, expr: FaceExpression, dt: numb
 }
 
 /** Hand tools in the same chunky style as the characters. */
-function buildHandProp(kind: HandProp): THREE.Object3D {
+export function buildHandProp(kind: HandProp): THREE.Object3D {
   const g = new THREE.Group();
   const steel = new THREE.MeshStandardMaterial({ color: '#d7dee6', metalness: 0.85, roughness: 0.22 });
   const wood = new THREE.MeshStandardMaterial({ color: '#8a5a33', roughness: 0.6 });
