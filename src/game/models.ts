@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { addWorldDish } from './worldDishes';
 import { addFoodModel } from './foodModels';
+import { applyEquipmentLook } from './equipmentLooks';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import {
   CafeThemeDef,
@@ -2247,7 +2248,7 @@ function createBurgerPosterTexture(): THREE.CanvasTexture {
 }
 
 function addCabinetFeet(group: THREE.Group, halfW: number, halfD: number) {
-  const footMat = new THREE.MeshStandardMaterial({ color: '#1e293b', roughness: 0.7 });
+  const footMat = new THREE.MeshStandardMaterial({ name: 'eq_feet', color: '#1e293b', roughness: 0.7 });
   for (const sx of [-halfW + 0.1, halfW - 0.1]) {
     for (const sz of [-halfD + 0.1, halfD - 0.1]) {
       const foot = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.12, 0.14), footMat);
@@ -2259,16 +2260,18 @@ function addCabinetFeet(group: THREE.Group, halfW: number, halfD: number) {
 }
 
 // 3D Kitchen Station Models styled after reference prop sheets (oak, cream, crimson & brushed steel)
-export function createKitchenStationMesh(type: StationType): THREE.Group {
+export function createKitchenStationMesh(type: StationType, level = 1): THREE.Group {
   const group = new THREE.Group();
-  const steelMat = new THREE.MeshStandardMaterial({ color: '#dce3eb', metalness: 0.65, roughness: 0.28 });
-  const darkMetalMat = new THREE.MeshStandardMaterial({ color: '#334155', metalness: 0.5, roughness: 0.45 });
+  // Named so the upgrade looks (equipmentLooks.ts) can restyle them per upgrade stage
+  const steelMat = new THREE.MeshStandardMaterial({ name: 'eq_steel', color: '#dce3eb', metalness: 0.65, roughness: 0.28 });
+  const darkMetalMat = new THREE.MeshStandardMaterial({ name: 'eq_dark', color: '#334155', metalness: 0.5, roughness: 0.45 });
   const oakMat = new THREE.MeshStandardMaterial({
+    name: 'eq_body',
     map: createWoodTexture('#d98236', '#9a4d12', 2),
     roughness: 0.58,
   });
-  const creamMat = new THREE.MeshStandardMaterial({ color: '#f3ead8', roughness: 0.55 });
-  const redMat = new THREE.MeshStandardMaterial({ color: '#dc2626', roughness: 0.36, metalness: 0.08 });
+  const creamMat = new THREE.MeshStandardMaterial({ name: 'eq_cream', color: '#f3ead8', roughness: 0.55 });
+  const redMat = new THREE.MeshStandardMaterial({ name: 'eq_accent', color: '#dc2626', roughness: 0.36, metalness: 0.08 });
 
   if (type === 'grill') {
     // Grill Station: Oak lower cabinet + brushed steel top shroud + red knobs + ribbed grill + burgers + side shelf & bottles
@@ -2706,6 +2709,7 @@ export function createKitchenStationMesh(type: StationType): THREE.Group {
     group.add(bobaCup);
   }
 
+  applyEquipmentLook(group, type, level);
   return group;
 }
 

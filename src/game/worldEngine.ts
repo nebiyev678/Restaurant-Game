@@ -6,6 +6,7 @@ import { ParkingTraffic } from './parking';
 import { CUISINES, getAlbumPriceMult, getMenuRecipes, getNextCuisine } from './cuisines';
 import { createCuisineDecor } from './cuisineDecor';
 import { CookVisual, createCookVisual, loadFoodModels } from './foodModels';
+import { equipmentStage } from './equipmentLooks';
 import {
   computeCharm,
   createEmptyLayout,
@@ -153,6 +154,7 @@ import {
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _ndc = new THREE.Vector2();
+const STATION_TYPES: StationType[] = ['grill', 'prep', 'fryer', 'oven', 'bar', 'specialty'];
 /** Dining-room floor height, for dragging furniture around in design mode. */
 const _floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.1);
 const _v3 = new THREE.Vector3();
@@ -364,6 +366,13 @@ export class RestaurantWorldEngine {
   private keepClear: Rect[] = [];
   private serviceReachPoints: { x: number; z: number }[] = [];
   private entrancePoint = { x: 2, z: 0 };
+  // ---- Machine upgrade looks ----
+  private stationMeshes = new Map<StationType, THREE.Group>();
+  private lastEquipLevels: Partial<Record<StationType, number>> = {};
+  /** Machines just upgraded: they bounce and sparkle once play resumes. */
+  private stationCelebrations: { type: StationType; t: number }[] = [];
+  private masterStations = new Set<StationType>();
+  private masterSparkle = 0;
   private wallZ = -6.72;
   private wallSpan = { minX: -6, maxX: 2.6 };
   private wallFixed: { minX: number; maxX: number; minY: number; maxY: number }[] = [];
@@ -1257,7 +1266,7 @@ export class RestaurantWorldEngine {
 
     // 1. Rebuild Restaurant Structure & Tables if tier or cafe theme changed
     const activeThemeId = save.activeCafeThemeId ?? 'classic_bistro';
-    const stationsKey = `${save.activeCuisine ?? 'bistro'}|${getActiveStations(getMenuRecipes(save)).join(',')}|${[...(save.expansions ?? [])].sort().join(',')}|${save.layout?.floor ?? 'theme'}|${save.layout?.wall ?? 'theme'}`;
+    const stationsKey = `${save.activeCuisine ?? 'bistro'}|${getActiveStations(getMenuRecipes(save)).join(',')}|${[...(save.expansions ?? [])].sort().join(',')}|${save.layout?.floor ?? 'theme'}|${save.layout?.wall ?? 'theme'}|${STATION_TYPES.map((t) => save.equipmentLevels[t] ?? 1).join('')}`;
     if (
       force ||
       this.lastTier !== tierInfo.tier ||
@@ -1771,7 +1780,15 @@ export class RestaurantWorldEngine {
       const isActive = activeStations.has(st.type);
       let mesh: THREE.Group;
       if (isActive) {
-        mesh = createKitchenStationMesh(st.type);
+        // Upgraded machines look more expensive (Steel → Pro → Master)
+        const level = this.saveRef.current.equipmentLevels[st.type] ?? 1;
+        mesh = createKitchenStationMesh(st.type, level);
+        const before = this.lastEquipLevels[st.type];
+        if (before !== undefined && level > before) this.stationCelebrations.push({ type: st.type, t: 0 });
+        this.lastEquipLevels[st.type] = level;
+        this.stationMeshes.set(st.type, mesh);
+        if (equipmentStage(level) === 3) this.masterStations.add(st.type);
+        else this.masterStations.delete(st.type);
       } else {
         // Machines not unlocked yet arrive covered and strapped, tagged with what they'll cook
         const upcoming = RECIPE_LIST.filter((r) => r.station === st.type && cuisineMenu.includes(r.id) && !unlockedSet.has(r.id)).sort(
@@ -1780,6 +1797,8 @@ export class RestaurantWorldEngine {
         const first = upcoming[0];
         const level = first?.requiredLevel ?? 1;
         mesh = createCoveredMachineMesh(st.type, first?.name ?? STATION_INFO[st.type].short, level);
+        this.stationMeshes.delete(st.type);
+        this.masterStations.delete(st.type);
       }
       mesh.position.set(st.x, 0.1, st.z);
       mesh.rotation.y = st.type === 'bar' ? 0 : Math.PI / 2;
@@ -3631,6 +3650,39 @@ export class RestaurantWorldEngine {
     sound.playCash();
   }
 
+  /** Upgrade celebrations (bounce + sparkles) and the occasional glint on Master machines. */
+  private updateStationLooks(dt: number) {
+    for (const c of this.stationCelebrations) {
+      const mesh = this.stationMeshes.get(c.type);
+      const st = this.stations.find((s) => s.type === c.type);
+      if (!mesh || !st) {
+        c.t = 99;
+        continue;
+      }
+      if (c.t === 0) {
+        sound.playUnlock();
+        this.spawnBurst(st.mx, 1.3, st.mz, '#facc15', 26);
+        this.spawnBurst(st.mx, 1.0, st.mz, '#ffffff', 12);
+      }
+      c.t += dt;
+      // Squash-and-stretch bounce over 0.7 s
+      const k = Math.min(1, c.t / 0.7);
+      const bounce = Math.sin(k * Math.PI * 2.5) * (1 - k) * 0.12;
+      mesh.scale.set(1 - bounce * 0.5, 1 + bounce, 1 - bounce * 0.5);
+      if (k >= 1) mesh.scale.set(1, 1, 1);
+    }
+    this.stationCelebrations = this.stationCelebrations.filter((c) => c.t < 0.7);
+    if (this.masterStations.size) {
+      this.masterSparkle -= dt;
+      if (this.masterSparkle <= 0) {
+        this.masterSparkle = 1.6 + Math.random() * 1.6;
+        const types = [...this.masterStations];
+        const st = this.stations.find((s) => s.type === types[Math.floor(Math.random() * types.length)]);
+        if (st) this.spawnBurst(st.mx + (Math.random() - 0.5) * 0.6, 1.15 + Math.random() * 0.3, st.mz + (Math.random() - 0.5) * 0.6, '#fde68a', 3);
+      }
+    }
+  }
+
   private spawnBurst(x: number, y: number, z: number, colorHex: string, count: number) {
     let spawned = 0;
     for (const p of this.particles) {
@@ -3745,6 +3797,7 @@ export class RestaurantWorldEngine {
 
     // 4. Particles
     this.updateParticles(dt);
+    this.updateStationLooks(dt);
 
     this.updateCookJobs(dt);
 

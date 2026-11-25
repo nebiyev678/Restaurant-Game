@@ -243,7 +243,9 @@ export function buildPreviewModel(kind: PreviewKind, id: string): THREE.Object3D
         g.add(plant);
         return g;
       }
-      return createKitchenStationMesh(id as StationType);
+      // "grill@4" shows the machine's look at that upgrade level
+      const [type, lv] = id.split('@');
+      return createKitchenStationMesh(type as StationType, Number(lv) || 1);
     }
     case 'franchise': {
       const idx = Math.max(0, FRANCHISE_CATALOG.findIndex((f) => f.id === id));
