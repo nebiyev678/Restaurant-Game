@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { PWAInstallButton } from './PWAInstallButton';
 import { CarShowroom } from './CarShowroom';
+import { equipmentStage, STAGE_NAMES } from '../game/equipmentLooks';
 import { LiveModelViewer, PreviewThumb } from './ItemPreview';
 import { buildDressedChef, buildHomePreview } from '../game/previewModels';
 import {
@@ -356,7 +357,25 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                           className="rounded-xl bg-slate-900 border border-slate-800 p-3.5 flex flex-col justify-between gap-3"
                         >
                           <div>
-                            <PreviewThumb kind="equipment" id={eqId} alt={def.name} className="h-28 w-full mb-2.5" />
+                            <PreviewThumb
+                              kind="equipment"
+                              id={eqId === 'register' || eqId === 'decor' ? eqId : `${eqId}@${lv}`}
+                              alt={def.name}
+                              className="h-28 w-full mb-2.5"
+                            />
+                            {eqId !== 'register' && eqId !== 'decor' && (
+                              <p className="mb-1 text-[10px] font-semibold text-amber-300/90">
+                                {STAGE_NAMES[equipmentStage(lv)]} look
+                                {(() => {
+                                  const next = [2, 4, 6].find((n) => n > lv);
+                                  return next ? (
+                                    <span className="text-slate-400 font-normal"> · {STAGE_NAMES[equipmentStage(next)]} look at Lv {next} ✨</span>
+                                  ) : (
+                                    <span className="text-slate-400 font-normal"> · fully upgraded</span>
+                                  );
+                                })()}
+                              </p>
+                            )}
                             <div className="flex items-center justify-between gap-2 mb-1">
                               <span className="font-semibold text-sm text-white">{def.name}</span>
                               <span className="font-mono-num text-xs text-amber-400">
