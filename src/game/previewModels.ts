@@ -17,6 +17,7 @@ import {
 import {
   applyPlayerClothes,
   createCharacterModel,
+  updateFace,
   createCheckerTexture,
   createDiningTableMesh,
   createDishMesh,
@@ -63,14 +64,15 @@ export type PreviewKind =
 
 /** The player's base look (matches the in-game chef). */
 const PLAYER_LOOK = {
-  shirtColor: '#f5efe6',
-  pantsColor: '#463b38',
-  apronColor: '#dc2626',
-  shoeColor: '#dc2626',
-  trimColor: '#dc2626',
-  hairColor: '#5a3826',
-  hasTowel: true,
-  apronStyle: 'bib' as const,
+  shirtColor: '#faf6ee',
+  pantsColor: '#3b3330',
+  shoeColor: '#4a2f22',
+  trimColor: '#e8a33a',
+  scarfColor: '#d63a1f',
+  longSleeves: true,
+  skinColor: '#f0b48a',
+  hairColor: '#4a2c1d',
+  signatureChef: true,
 };
 
 const FRANCHISE_COLORS = ['#be185d', '#1d4ed8', '#15803d', '#a16207', '#7c3aed'];
@@ -83,6 +85,7 @@ function clothing(id: string) {
 export function buildDressedChef(outfitId: string, hatId: string, watchId: string): THREE.Object3D {
   const parts = createCharacterModel(PLAYER_LOOK);
   applyPlayerClothes(parts, clothing(outfitId), clothing(hatId), clothing(watchId));
+  updateFace(parts, 'jolly', 1);
   // A relaxed pose with the watch arm slightly forward so accessories are visible
   parts.leftArm.rotation.x = -0.35;
   parts.leftArm.rotation.z = 0.12;

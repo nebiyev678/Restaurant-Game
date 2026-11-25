@@ -196,6 +196,13 @@ function loadSavedState(): { state: SaveState; hasExisting: boolean } {
       state: {
         ...base,
         ...parsed,
+        // Older saves: the player becomes the mascot chef and gets the toque (once)
+        ownedClothes: parsed.playerLookV2
+          ? (parsed.ownedClothes ?? base.ownedClothes)
+          : Array.from(new Set([...(parsed.ownedClothes ?? base.ownedClothes), 'hat_toque'])),
+        equippedHatId:
+          !parsed.playerLookV2 && (parsed.equippedHatId ?? 'hat_none') === 'hat_none' ? 'hat_toque' : (parsed.equippedHatId ?? base.equippedHatId),
+        playerLookV2: true,
         unlockedSpecialtyLines: Array.isArray(parsed.unlockedSpecialtyLines)
           ? parsed.unlockedSpecialtyLines
           : base.unlockedSpecialtyLines,
