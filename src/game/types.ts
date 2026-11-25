@@ -462,6 +462,8 @@ export interface SaveState {
   seenFeatures: string[];
   /** Interior design: furniture and decorations in the dining room, floor and wallpaper. */
   layout?: RestaurantLayout;
+  /** The player became the mascot chef (toque added once for older saves). */
+  playerLookV2?: boolean;
   isMuted: boolean;
   isMusicMuted: boolean;
   dailyLogin: {

@@ -1121,15 +1121,18 @@ export class RestaurantWorldEngine {
     this.scene.add(this.showroomGroup);
 
     // Player character (Restaurant Owner-Chef starter look)
+    // The mascot chef: white jacket, red neckerchief, toque, big curled moustache
     this.playerParts = createCharacterModel({
-      shirtColor: '#f5efe6',
-      pantsColor: '#463b38',
-      apronColor: '#dc2626',
-      shoeColor: '#dc2626',
-      trimColor: '#dc2626',
-      hairColor: '#5a3826',
-      hasTowel: true,
-      apronStyle: 'bib',
+      shirtColor: '#faf6ee',
+      pantsColor: '#3b3330',
+      shoeColor: '#4a2f22',
+      trimColor: '#e8a33a',
+      scarfColor: '#d63a1f',
+      longSleeves: true,
+      skinColor: '#f0b48a',
+      hairColor: '#4a2c1d',
+      hatStyle: 'toque',
+      signatureChef: true,
     });
     this.playerParts.root.position.copy(this.playerPos);
     this.scene.add(this.playerParts.root);
@@ -4134,7 +4137,7 @@ export class RestaurantWorldEngine {
         activityTime: performance.now() / 1000,
         seedOffset: 0,
         baseGroundY: this.playerGroundY,
-        expression: this.playerJoy > 0 ? 'delighted' : cookAt ? 'focused' : 'happy',
+        expression: this.playerJoy > 0 ? 'delighted' : cookAt ? 'focused' : 'jolly',
         cookStyle: cookAt ? COOK_STYLE_BY_STATION[cookAt.type] : undefined,
       });
       this.playerParts.root.position.x = this.playerPos.x;

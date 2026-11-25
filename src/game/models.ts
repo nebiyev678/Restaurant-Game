@@ -888,10 +888,12 @@ export interface CharacterOptions {
   hatColor?: string;
   watchColor?: string;
   scale?: number;
+  /** The game's mascot chef: big curled moustache, round nose, fuller face and figure. */
+  signatureChef?: boolean;
 }
 
 
-export type FaceExpression = 'happy' | 'neutral' | 'focused' | 'impatient' | 'angry' | 'delighted' | 'eating' | 'surprised';
+export type FaceExpression = 'happy' | 'neutral' | 'focused' | 'impatient' | 'angry' | 'delighted' | 'eating' | 'surprised' | 'jolly';
 
 export type HandProp = 'spatula' | 'knife' | 'basket' | 'ladle' | 'shaker' | 'scoop' | 'cloth';
 
@@ -1005,6 +1007,7 @@ const EXPRESSIONS: Record<
   angry: { mouth: 'frown', browY: 0.066, browTilt: -0.48, eyeY: 0.8 },
   delighted: { mouth: 'grin', browY: 0.096, browTilt: 0.2, eyeY: 1, happyEyes: true },
   eating: { mouth: 'open', browY: 0.084, browTilt: 0.16, eyeY: 1 },
+  jolly: { mouth: 'smile', browY: 0.09, browTilt: 0.22, eyeY: 1, happyEyes: true },
   surprised: { mouth: 'open', browY: 0.100, browTilt: 0.1, eyeY: 1.25 },
 };
 
@@ -1729,8 +1732,79 @@ export function createCharacterModel(opts: CharacterOptions = {}): CharacterPart
     collarTrimMat,
   };
 
+  if (opts.signatureChef) addSignatureChefFeatures(parts, headGroup, nose, hairMat, hairBase, hairBack);
   applyCharacterHat(parts, opts.hatStyle ?? 'none', opts.hatColor ?? '#ffffff');
   return parts;
+}
+
+
+/** Mascot chef details: curled moustache, big round nose, thick brows, fuller face, sideburns. */
+function addSignatureChefFeatures(
+  parts: CharacterParts,
+  head: THREE.Group,
+  nose: THREE.Mesh,
+  hairMat: THREE.MeshStandardMaterial,
+  hairBase: THREE.Mesh,
+  hairBack: THREE.Mesh
+) {
+  const stache = new THREE.MeshStandardMaterial({ color: '#4a2a1a', roughness: 0.7 });
+  // Big, round nose
+  nose.scale.set(1.7, 1.45, 1.5);
+  nose.position.set(0, -0.025, 0.252);
+  // A fuller, rounder face
+  const headMesh = head.children[0] as THREE.Mesh;
+  headMesh.scale.set(1.1, 1.0, 1.0);
+  // Curled handlebar moustache: two plump halves that sweep up at the tips
+  for (const side of [-1, 1]) {
+    const half = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.03, 0.07, 6, 10), stache);
+    body.rotation.z = side * (Math.PI / 2 - 0.35);
+    body.position.set(side * 0.05, 0, 0);
+    const tip = new THREE.Mesh(new THREE.TorusGeometry(0.026, 0.017, 8, 12, Math.PI * 1.1), stache);
+    tip.position.set(side * 0.105, 0.022, 0);
+    tip.rotation.z = side > 0 ? -0.6 : Math.PI + 0.6;
+    half.add(body, tip);
+    half.position.set(0, -0.062, 0.248);
+    half.rotation.y = side * 0.32;
+    head.add(half);
+  }
+  // Thick, expressive eyebrows
+  for (const b of parts.face.brows) {
+    b.scale.set(1.5, 1.35, 1.2);
+    b.material = stache;
+  }
+  // Short sideburns and tidy hair (mostly under the toque)
+  for (const side of [-1, 1]) {
+    const burn = new THREE.Mesh(new THREE.CapsuleGeometry(0.03, 0.06, 4, 8), hairMat);
+    burn.position.set(side * 0.235, -0.01, 0.07);
+    head.add(burn);
+  }
+  parts.hairCrestGroup.visible = false;
+  hairBase.scale.set(1.02, 0.9, 1.0);
+  hairBack.scale.multiplyScalar(1.02);
+  // Mouth sits a little lower, under the moustache
+  for (const m of Object.values(parts.face.mouths)) m.position.y -= 0.012;
+  // A big, floppy neckerchief: knot plus a red triangle over the chest (shown with the scarf)
+  const kerchief = parts.scarfMat;
+  const knot = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), kerchief);
+  knot.scale.set(1.2, 0.9, 0.8);
+  knot.position.set(0, 1.24, 0.17);
+  const bib = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.19, 14), kerchief);
+  bib.rotation.set(Math.PI + 0.12, 0, 0);
+  bib.scale.set(1, 1, 0.32);
+  bib.position.set(0, 1.135, 0.19);
+  for (const side of [-1, 1]) {
+    // Soft, floppy bow loops either side of the knot
+    const loop = new THREE.Mesh(new THREE.SphereGeometry(0.055, 12, 8), kerchief);
+    loop.scale.set(1.35, 0.75, 0.45);
+    loop.rotation.z = side * -0.4;
+    loop.position.set(side * 0.075, 1.215, 0.18);
+    parts.scarfGroup.add(loop);
+  }
+  parts.scarfGroup.add(knot, bib);
+  // A rounder, jollier figure
+  parts.torsoMesh.scale.x *= 1.12;
+  parts.torsoMesh.scale.z *= 1.12;
 }
 
 export function applyCharacterHat(
@@ -1758,13 +1832,30 @@ export function applyCharacterHat(
   });
 
   if (hatStyle === 'toque') {
-    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.13, 16), mat);
-    band.position.y = 0.04;
-    const puff = new THREE.Mesh(new THREE.SphereGeometry(0.27, 16, 12), mat);
-    puff.scale.set(1, 0.85, 1);
-    puff.position.y = 0.22;
-    puff.castShadow = true;
-    parts.hatAnchor.add(band, puff);
+    // Classic chef's toque: a pleated band under a soft cloud of puffs
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.235, 0.225, 0.16, 24), mat);
+    band.position.y = 0.05;
+    band.castShadow = true;
+    const pleatMat = (mat as THREE.MeshStandardMaterial).clone();
+    pleatMat.color.multiplyScalar(0.93);
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      const pleat = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.15, 0.01), pleatMat);
+      pleat.position.set(Math.sin(a) * 0.232, 0.05, Math.cos(a) * 0.232);
+      pleat.rotation.y = a;
+      parts.hatAnchor.add(pleat);
+    }
+    const centre = new THREE.Mesh(new THREE.SphereGeometry(0.2, 18, 14), mat);
+    centre.position.y = 0.3;
+    centre.castShadow = true;
+    parts.hatAnchor.add(band, centre);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + 0.3;
+      const puff = new THREE.Mesh(new THREE.SphereGeometry(0.135, 14, 10), mat);
+      puff.position.set(Math.sin(a) * 0.17, 0.22 + (i % 2) * 0.03, Math.cos(a) * 0.17);
+      puff.castShadow = true;
+      parts.hatAnchor.add(puff);
+    }
   } else if (hatStyle === 'cap') {
     const crown = new THREE.Mesh(
       new THREE.SphereGeometry(0.272, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.54),
