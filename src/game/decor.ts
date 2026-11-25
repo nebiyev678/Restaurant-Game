@@ -3,7 +3,7 @@
 // Pure data and rules (no three.js) so it can be unit tested.
 // ---------------------------------------------------------------------------
 
-export type DecorCategory = 'seating' | 'plants' | 'decor' | 'floors' | 'walls';
+export type DecorCategory = 'seating' | 'plants' | 'decor' | 'wallart' | 'counters' | 'floors' | 'walls';
 
 export type DecorItemId =
   // Seating (each one is a table for guests and counts toward the room's table limit)
@@ -13,6 +13,8 @@ export type DecorItemId =
   | 'booth_sky'
   | 'table_rustic'
   | 'booth_velvet'
+  | 'table_garden'
+  | 'booth_cream'
   // Plants
   | 'plant_classic'
   | 'plant_cactus'
@@ -20,6 +22,8 @@ export type DecorItemId =
   | 'plant_palm'
   | 'plant_flowers'
   | 'plant_olive'
+  | 'plant_monstera'
+  | 'plant_lemon'
   // Floor decorations
   | 'coat_rack'
   | 'rug_round'
@@ -32,7 +36,25 @@ export type DecorItemId =
   | 'dessert_cart'
   | 'fountain'
   | 'aquarium'
-  | 'piano';
+  | 'piano'
+  // Wall pieces (hang on the back wall of the dining room)
+  | 'wall_sconce'
+  | 'burger_art'
+  | 'ivy_shelf'
+  | 'frame_landscape'
+  | 'wall_clock'
+  | 'frame_trio'
+  | 'plate_display'
+  | 'string_lights'
+  | 'mirror_gold'
+  | 'neon_sign'
+  | 'wall_lantern'
+  | 'wall_shelf_jars'
+  // Counters
+  | 'host_stand'
+  | 'pastry_case'
+  | 'juice_bar'
+  | 'bar_counter';
 
 export interface DecorItemDef {
   id: DecorItemId;
@@ -48,6 +70,8 @@ export interface DecorItemDef {
   flat?: boolean;
   /** Seating: a booth instead of a table with chairs. */
   booth?: boolean;
+  /** Wall pieces: hang on the back wall; `y` is the height of their centre, `h` their height. */
+  wall?: { y: number; h: number };
   blurb: string;
 }
 
@@ -59,6 +83,8 @@ export const DECOR_ITEMS: DecorItemDef[] = [
   { id: 'booth_sky', name: 'Seaside blue booth', category: 'seating', price: 900, charm: 5, level: 6, w: 2.45, d: 1.2, booth: true, blurb: 'Light wood and ocean-blue cushions.' },
   { id: 'table_rustic', name: 'Rustic farmhouse set', category: 'seating', price: 650, charm: 4, level: 5, w: 2.45, d: 1.15, blurb: 'Dark walnut with sage-green cushions.' },
   { id: 'booth_velvet', name: 'Velvet lounge booth', category: 'seating', price: 1400, charm: 7, level: 8, w: 2.45, d: 1.2, booth: true, blurb: 'Emerald velvet and walnut, for VIPs.' },
+  { id: 'table_garden', name: 'Garden café set', category: 'seating', price: 500, charm: 3, level: 4, w: 2.45, d: 1.15, blurb: 'White painted wood with rose cushions.' },
+  { id: 'booth_cream', name: 'Caramel & cream booth', category: 'seating', price: 750, charm: 5, level: 4, w: 2.45, d: 1.2, booth: true, blurb: 'Soft cream leather on caramel wood.' },
   // Plants
   { id: 'plant_classic', name: 'Potted plant', category: 'plants', price: 60, charm: 2, level: 1, w: 0.6, d: 0.6, blurb: 'A leafy friend in a cream pot.' },
   { id: 'plant_cactus', name: 'Cactus trio', category: 'plants', price: 90, charm: 2, level: 2, w: 0.6, d: 0.45, blurb: 'Three little cacti on a terracotta tray.' },
@@ -66,6 +92,8 @@ export const DECOR_ITEMS: DecorItemDef[] = [
   { id: 'plant_palm', name: 'Tall palm', category: 'plants', price: 260, charm: 4, level: 3, w: 0.7, d: 0.7, blurb: 'Brings a holiday feeling to any corner.' },
   { id: 'plant_flowers', name: 'Flower planter', category: 'plants', price: 180, charm: 3, level: 4, w: 1.1, d: 0.45, blurb: 'A wooden box full of colourful flowers.' },
   { id: 'plant_olive', name: 'Olive tree', category: 'plants', price: 420, charm: 5, level: 6, w: 0.75, d: 0.75, blurb: 'A Mediterranean olive tree in a big pot.' },
+  { id: 'plant_monstera', name: 'Monstera', category: 'plants', price: 300, charm: 4, level: 5, w: 0.75, d: 0.75, blurb: 'Big glossy split leaves, very trendy.' },
+  { id: 'plant_lemon', name: 'Lemon tree', category: 'plants', price: 520, charm: 5, level: 8, w: 0.75, d: 0.75, blurb: 'Bright lemons in a terracotta pot.' },
   // Decorations
   { id: 'coat_rack', name: 'Coat stand', category: 'decor', price: 80, charm: 1, level: 1, w: 0.5, d: 0.5, blurb: 'Somewhere for guests to hang their coats.' },
   { id: 'rug_round', name: 'Round rug', category: 'decor', price: 180, charm: 2, level: 2, w: 1.8, d: 1.8, flat: true, blurb: 'Soft round rug. Lies under tables too.' },
@@ -79,6 +107,24 @@ export const DECOR_ITEMS: DecorItemDef[] = [
   { id: 'fountain', name: 'Mini fountain', category: 'decor', price: 950, charm: 8, level: 9, w: 1.05, d: 1.05, blurb: 'The calming sound of running water.' },
   { id: 'aquarium', name: 'Aquarium', category: 'decor', price: 1600, charm: 10, level: 12, w: 1.45, d: 0.55, blurb: 'Colourful fish in a glowing tank.' },
   { id: 'piano', name: 'Upright piano', category: 'decor', price: 2400, charm: 12, level: 15, w: 1.55, d: 0.65, blurb: 'The star of a classy restaurant.' },
+  // Wall pieces: `w` is the width along the wall, `d` how far they stick out
+  { id: 'wall_sconce', name: 'Wall lamp', category: 'wallart', price: 140, charm: 2, level: 1, w: 0.4, d: 0.3, wall: { y: 2.18, h: 0.4 }, blurb: 'A warm brass wall lamp.' },
+  { id: 'burger_art', name: 'Burger poster', category: 'wallart', price: 120, charm: 2, level: 1, w: 0.95, d: 0.2, wall: { y: 1.72, h: 1.16 }, blurb: 'A framed burger print.' },
+  { id: 'ivy_shelf', name: 'Ivy shelf', category: 'wallart', price: 160, charm: 2, level: 1, w: 1.2, d: 0.4, wall: { y: 2.58, h: 0.5 }, blurb: 'Trailing ivy on a little shelf.' },
+  { id: 'frame_landscape', name: 'Landscape painting', category: 'wallart', price: 150, charm: 2, level: 2, w: 1.1, d: 0.2, wall: { y: 1.8, h: 0.8 }, blurb: 'Rolling hills at sunset.' },
+  { id: 'wall_clock', name: 'Station clock', category: 'wallart', price: 180, charm: 2, level: 3, w: 0.6, d: 0.2, wall: { y: 2.35, h: 0.6 }, blurb: 'An old railway clock.' },
+  { id: 'frame_trio', name: 'Picture trio', category: 'wallart', price: 240, charm: 3, level: 3, w: 1.3, d: 0.2, wall: { y: 1.75, h: 0.7 }, blurb: 'Three little food prints.' },
+  { id: 'string_lights', name: 'String lights', category: 'wallart', price: 300, charm: 3, level: 4, w: 2.4, d: 0.2, wall: { y: 2.75, h: 0.3 }, blurb: 'Warm bulbs draped along the wall.' },
+  { id: 'plate_display', name: 'Painted plates', category: 'wallart', price: 320, charm: 3, level: 5, w: 1.2, d: 0.2, wall: { y: 2.0, h: 0.7 }, blurb: 'Hand-painted plates in a row.' },
+  { id: 'wall_shelf_jars', name: 'Pantry shelf', category: 'wallart', price: 280, charm: 3, level: 5, w: 1.2, d: 0.35, wall: { y: 2.3, h: 0.5 }, blurb: 'Jars of pasta, beans and spices.' },
+  { id: 'mirror_gold', name: 'Gold mirror', category: 'wallart', price: 500, charm: 4, level: 6, w: 0.9, d: 0.2, wall: { y: 1.75, h: 1.1 }, blurb: 'Makes the room feel bigger.' },
+  { id: 'neon_sign', name: 'Neon "YUM" sign', category: 'wallart', price: 600, charm: 5, level: 7, w: 1.2, d: 0.2, wall: { y: 2.2, h: 0.55 }, blurb: 'A glowing pink neon sign.' },
+  { id: 'wall_lantern', name: 'Wall lantern', category: 'wallart', price: 380, charm: 4, level: 8, w: 0.45, d: 0.4, wall: { y: 2.15, h: 0.6 }, blurb: 'A brass lantern on a curled bracket.' },
+  // Counters
+  { id: 'host_stand', name: 'Host stand', category: 'counters', price: 350, charm: 3, level: 4, w: 0.75, d: 0.55, blurb: 'A little podium to welcome guests.' },
+  { id: 'pastry_case', name: 'Pastry display', category: 'counters', price: 900, charm: 6, level: 7, w: 1.6, d: 0.7, blurb: 'A glass case full of cakes and pastries.' },
+  { id: 'juice_bar', name: 'Juice bar', category: 'counters', price: 1200, charm: 7, level: 9, w: 1.8, d: 0.75, blurb: 'Fresh fruit, a juicer and colourful jars.' },
+  { id: 'bar_counter', name: 'Bar counter & stools', category: 'counters', price: 1800, charm: 8, level: 12, w: 2.4, d: 1.15, blurb: 'A polished wooden bar with three stools.' },
 ];
 
 export const DECOR_BY_ID = Object.fromEntries(DECOR_ITEMS.map((d) => [d.id, d])) as Record<DecorItemId, DecorItemDef>;
@@ -123,6 +169,8 @@ export interface PlacedDecor {
   rot: number;
   /** Seating only: stable table number guests are seated by. */
   tableNo?: number;
+  /** Wall pieces: height of the centre on the wall (default: the piece's usual height). */
+  y?: number;
 }
 
 export interface RestaurantLayout {
@@ -134,6 +182,8 @@ export interface RestaurantLayout {
   ownedWalls: WallId[];
   /** Tables the restaurant has handed out for free (one per table the room size allows). */
   tablesGranted: number;
+  /** The original wall lamps and pictures have been turned into movable wall pieces. */
+  wallDefaults?: boolean;
 }
 
 export function createEmptyLayout(): RestaurantLayout {
@@ -144,6 +194,28 @@ export const SELL_BACK = 0.5;
 
 export function sellValue(item: DecorItemId): number {
   return Math.floor(DECOR_BY_ID[item].price * SELL_BACK);
+}
+
+export function isWallItem(item: DecorItemId): boolean {
+  return !!DECOR_BY_ID[item].wall;
+}
+
+/** Lowest and highest a wall piece may hang (bottom edge, top edge) in metres. */
+export const WALL_MIN_Y = 1.05;
+export const WALL_MAX_Y = 2.92;
+
+export function wallY(p: { item: DecorItemId; y?: number }): number {
+  return p.y ?? DECOR_BY_ID[p.item].wall?.y ?? 2;
+}
+
+/** Wall pieces overlap when they share both some width along the wall and some height. */
+export function wallItemsOverlap(a: { item: DecorItemId; x: number; y?: number }, b: { item: DecorItemId; x: number; y?: number }, gap = 0.05): boolean {
+  const da = DECOR_BY_ID[a.item];
+  const db = DECOR_BY_ID[b.item];
+  if (!da.wall || !db.wall) return false;
+  const xo = Math.abs(a.x - b.x) < (da.w + db.w) / 2 + gap;
+  const yo = Math.abs(wallY(a) - wallY(b)) < (da.wall.h + db.wall.h) / 2;
+  return xo && yo;
 }
 
 export function isSeating(item: DecorItemId): boolean {

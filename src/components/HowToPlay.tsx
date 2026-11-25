@@ -86,6 +86,7 @@ const topics = (isTouch: boolean, side: 'left' | 'right'): Topic[] => [
       'Tap Design in the bottom menu. The game pauses and you see the dining room from above.',
       'Drag tables, booths, plants and decorations to move them. Turn rotates, the red button sells for half price.',
       'Buy new furniture, floors and wallpaper from the tray at the bottom. Things can’t block the door, counter, machines or the way to a seat.',
+      'Wall art and wall lamps hang on the back wall: drag them left, right, up or down.',
       'Decorations add Charm: a few more guests, tips and patience. Fast service and good dishes still matter most.',
     ],
   },

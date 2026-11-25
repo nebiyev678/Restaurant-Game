@@ -1,8 +1,18 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { createFlowerBox, createGlowSprite, GlowMat } from './cozyDecor';
+import { createFlowerBox, createGlowSprite, createLightPool, GlowMat } from './cozyDecor';
 import { DECOR_BY_ID, DecorItemId, FloorId, FLOORS, WallId, WALLS } from './decor';
-import { createContactShadow, createDiningTableMesh, createPottedPlantMesh, createWoodTexture, DiningTableParts, TableStyle } from './models';
+import {
+  createContactShadow,
+  createDiningTableMesh,
+  createFramedBurgerArtMesh,
+  createHangingIvyShelfMesh,
+  createPottedPlantMesh,
+  createWallSconceMesh,
+  createWoodTexture,
+  DiningTableParts,
+  TableStyle,
+} from './models';
 import type { CafeThemeDef } from './types';
 
 // ---------------------------------------------------------------------------
@@ -18,6 +28,8 @@ export const TABLE_STYLES: Partial<Record<DecorItemId, TableStyle>> = {
   table_rustic: { woodPrimary: '#8a5530', woodSecondary: '#4a2a14', cushion: '#7f9b6e' },
   booth_sky: { woodPrimary: '#ecd1a4', woodSecondary: '#b98d5c', cushion: '#3b82c4' },
   booth_velvet: { woodPrimary: '#6b3f22', woodSecondary: '#3f2412', cushion: '#1f6b4f', leg: '#b8862f', legMetal: 0.8, velvet: true },
+  table_garden: { woodPrimary: '#f6f2ea', woodSecondary: '#d8cfbf', cushion: '#e98aa0', leg: '#f1ece2', legMetal: 0.2, marbleTop: '#fbfaf7' },
+  booth_cream: { woodPrimary: '#d0904f', woodSecondary: '#9a5f2c', cushion: '#f1e3c8' },
 };
 
 /** A table set (table + chairs or booth benches) for one seating item. */
@@ -568,6 +580,518 @@ function piano(): THREE.Group {
   return g;
 }
 
+
+function monstera(): THREE.Group {
+  const g = new THREE.Group();
+  shadow(g, 0.42, 0.42);
+  const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.22, 0.4, 18), mat('#efe6d6', 0.55));
+  pot.position.y = 0.2;
+  const legs = mat('#8a5a33', 0.6);
+  g.add(pot);
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2;
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.12, 6), legs);
+    leg.position.set(Math.cos(a) * 0.18, 0.02, Math.sin(a) * 0.18);
+    g.add(leg);
+  }
+  const leafMat = mat('#2f7d46', 0.45);
+  const darkMat = mat('#1f5f35', 0.5);
+  const stemMat = mat('#4f8a3c', 0.6);
+  for (let i = 0; i < 7; i++) {
+    const a = (i / 7) * Math.PI * 2 + 0.3;
+    const len = 0.45 + (i % 3) * 0.12;
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.016, len, 5), stemMat);
+    stem.position.set(Math.cos(a) * len * 0.25, 0.4 + len / 2, Math.sin(a) * len * 0.25);
+    stem.rotation.set(Math.sin(a) * 0.5, 0, -Math.cos(a) * 0.5);
+    g.add(stem);
+    // Big round leaf
+    const leaf = new THREE.Group();
+    const blade = new THREE.Mesh(new THREE.CircleGeometry(0.2, 14), i % 2 ? leafMat : darkMat);
+    blade.material.side = THREE.DoubleSide;
+    leaf.add(blade);
+    leaf.position.set(Math.cos(a) * len * 0.55, 0.4 + len, Math.sin(a) * len * 0.55);
+    leaf.rotation.set(-Math.PI / 2 + 0.7, 0, 0);
+    leaf.rotation.y = -a + Math.PI / 2;
+    leaf.rotateX(-0.9);
+    g.add(leaf);
+  }
+  return g;
+}
+
+function lemonTree(): THREE.Group {
+  const g = new THREE.Group();
+  shadow(g, 0.42, 0.42);
+  const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.23, 0.42, 18), mat('#c8693f', 0.75));
+  pot.position.y = 0.21;
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.03, 6, 20), mat('#b05a33', 0.7));
+  rim.rotation.x = Math.PI / 2;
+  rim.position.y = 0.42;
+  g.add(pot, rim);
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 0.8, 7), mat('#7a5a3c', 0.85));
+  trunk.position.y = 0.8;
+  g.add(trunk);
+  const crown = leafBall('#3f8a3a', 0.36, 1, 0.85, 1);
+  crown.position.y = 1.35;
+  g.add(crown);
+  const lemonMat = mat('#f6d33c', 0.4);
+  for (let i = 0; i < 9; i++) {
+    const a = i * 2.39;
+    const lemon = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), lemonMat);
+    lemon.scale.set(1, 1.25, 1);
+    lemon.position.set(Math.cos(a) * 0.3, 1.2 + (i % 4) * 0.08, Math.sin(a) * 0.3);
+    g.add(lemon);
+  }
+  return g;
+}
+
+// ---- Wall pieces: the back sits on the wall (z = 0), centred on their mount height ----
+
+function frame(w: number, h: number, wood: THREE.Material, picture: THREE.Material, depth = 0.05): THREE.Group {
+  const g = new THREE.Group();
+  const back = new THREE.Mesh(new THREE.BoxGeometry(w, h, depth), wood);
+  back.position.z = depth / 2;
+  const pic = new THREE.Mesh(new THREE.PlaneGeometry(w - 0.12, h - 0.12), picture);
+  pic.position.z = depth + 0.002;
+  g.add(back, pic);
+  return g;
+}
+
+function paintedTexture(w: number, h: number, paint: (x: CanvasRenderingContext2D, W: number, H: number) => void): THREE.MeshStandardMaterial {
+  const c = document.createElement('canvas');
+  c.width = Math.round(w * 128);
+  c.height = Math.round(h * 128);
+  const x = c.getContext('2d')!;
+  paint(x, c.width, c.height);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.MeshStandardMaterial({ map: t, roughness: 0.8 });
+}
+
+function landscapePainting(): THREE.Group {
+  const pic = paintedTexture(1, 0.7, (x, W, H) => {
+    const sky = x.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, '#f7b267');
+    sky.addColorStop(0.6, '#f9dcae');
+    x.fillStyle = sky;
+    x.fillRect(0, 0, W, H);
+    x.fillStyle = '#fbe7a1';
+    x.beginPath();
+    x.arc(W * 0.72, H * 0.42, H * 0.12, 0, Math.PI * 2);
+    x.fill();
+    const hills: [string, number][] = [
+      ['#a7c47a', 0.62],
+      ['#7ea35a', 0.72],
+      ['#5d8443', 0.84],
+    ];
+    hills.forEach(([col, y], i) => {
+      x.fillStyle = col;
+      x.beginPath();
+      x.moveTo(0, H);
+      for (let k = 0; k <= 10; k++) x.lineTo((k / 10) * W, H * y + Math.sin(k * 1.3 + i) * H * 0.05);
+      x.lineTo(W, H);
+      x.fill();
+    });
+    x.fillStyle = '#3f5f30';
+    for (let k = 0; k < 6; k++) {
+      x.beginPath();
+      x.ellipse(W * (0.1 + k * 0.15), H * 0.78, W * 0.012, H * 0.09, 0, 0, Math.PI * 2);
+      x.fill();
+    }
+  });
+  return frame(1.1, 0.8, mat('#b8862f', 0.35, 0.6), pic, 0.06);
+}
+
+function stationClock(): THREE.Group {
+  const g = new THREE.Group();
+  const face = paintedTexture(0.5, 0.5, (x, W) => {
+    x.fillStyle = '#fbf7ee';
+    x.fillRect(0, 0, W, W);
+    x.strokeStyle = '#222';
+    x.lineWidth = 3;
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      x.beginPath();
+      x.moveTo(W / 2 + Math.cos(a) * W * 0.38, W / 2 + Math.sin(a) * W * 0.38);
+      x.lineTo(W / 2 + Math.cos(a) * W * 0.45, W / 2 + Math.sin(a) * W * 0.45);
+      x.stroke();
+    }
+    x.lineWidth = 5;
+    x.beginPath();
+    x.moveTo(W / 2, W / 2);
+    x.lineTo(W / 2, W * 0.2);
+    x.moveTo(W / 2, W / 2);
+    x.lineTo(W * 0.7, W * 0.58);
+    x.stroke();
+    x.strokeStyle = '#c0392b';
+    x.lineWidth = 2;
+    x.beginPath();
+    x.moveTo(W / 2, W / 2);
+    x.lineTo(W * 0.32, W * 0.78);
+    x.stroke();
+  });
+  const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.29, 0.29, 0.08, 32), mat('#1f2a2e', 0.35, 0.5));
+  rim.rotation.x = Math.PI / 2;
+  rim.position.z = 0.06;
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(0.25, 32), face);
+  disc.position.z = 0.101;
+  const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.12, 0.06), mat('#1f2a2e', 0.4, 0.5));
+  bracket.position.set(0, 0.32, 0.03);
+  g.add(rim, disc, bracket);
+  return g;
+}
+
+function pictureTrio(): THREE.Group {
+  const g = new THREE.Group();
+  const wood = mat('#2b2622', 0.4);
+  const prints: [string, string][] = [
+    ['#f4d7a1', '#c0392b'],
+    ['#d9eef0', '#2f6fa5'],
+    ['#efe1c6', '#3f7a4a'],
+  ];
+  prints.forEach(([bg, fg], i) => {
+    const pic = paintedTexture(0.32, 0.42, (x, W, H) => {
+      x.fillStyle = bg;
+      x.fillRect(0, 0, W, H);
+      x.fillStyle = fg;
+      if (i === 0) {
+        // A tomato
+        x.beginPath();
+        x.arc(W / 2, H * 0.55, W * 0.28, 0, Math.PI * 2);
+        x.fill();
+        x.fillStyle = '#3f7a4a';
+        x.fillRect(W * 0.45, H * 0.22, W * 0.1, H * 0.1);
+      } else if (i === 1) {
+        // A fish
+        x.beginPath();
+        x.ellipse(W * 0.45, H / 2, W * 0.3, H * 0.13, 0, 0, Math.PI * 2);
+        x.fill();
+        x.beginPath();
+        x.moveTo(W * 0.72, H / 2);
+        x.lineTo(W * 0.92, H * 0.38);
+        x.lineTo(W * 0.92, H * 0.62);
+        x.fill();
+      } else {
+        // A herb sprig
+        x.fillRect(W * 0.48, H * 0.2, W * 0.04, H * 0.6);
+        for (let k = 0; k < 4; k++) {
+          x.beginPath();
+          x.ellipse(W * (k % 2 ? 0.62 : 0.38), H * (0.3 + k * 0.12), W * 0.12, H * 0.05, k % 2 ? 0.5 : -0.5, 0, Math.PI * 2);
+          x.fill();
+        }
+      }
+    });
+    const f = frame(0.38, 0.5, wood, pic, 0.04);
+    f.position.set((i - 1) * 0.44, i === 1 ? 0.08 : -0.05, 0);
+    g.add(f);
+  });
+  return g;
+}
+
+function stringLights(glows: GlowMat[]): THREE.Group {
+  const g = new THREE.Group();
+  const wire = mat('#2b2622', 0.6);
+  const bulbMat = new THREE.MeshStandardMaterial({ color: '#fff1c1', emissive: '#ffcf6b', emissiveIntensity: 1.3 });
+  const n = 12;
+  const pts: THREE.Vector3[] = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    const x = (t - 0.5) * 2.3;
+    const sag = Math.sin((t * 3) % 1 * Math.PI) * 0.16;
+    pts.push(new THREE.Vector3(x, 0.1 - sag, 0.08));
+  }
+  const curve = new THREE.CatmullRomCurve3(pts);
+  g.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 48, 0.008, 4), wire));
+  for (let i = 1; i < n; i++) {
+    const p = curve.getPoint(i / n);
+    const b = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), bulbMat);
+    b.position.set(p.x, p.y - 0.04, p.z);
+    g.add(b);
+    if (i % 3 === 0) {
+      const halo = createGlowSprite('#ffd27a', 0.5, 0.45, glows);
+      halo.position.copy(b.position);
+      g.add(halo);
+    }
+  }
+  return g;
+}
+
+function plateDisplay(): THREE.Group {
+  const g = new THREE.Group();
+  const colors = ['#2f6fa5', '#c0392b', '#3f7a4a', '#d9a13a', '#7c4a8a'];
+  [-0.42, 0, 0.42, -0.21, 0.21].forEach((x, i) => {
+    const y = i < 3 ? -0.12 : 0.2;
+    const r = i < 3 ? 0.17 : 0.13;
+    const plate = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 0.9, 0.025, 24), mat('#fbf7ee', 0.25));
+    plate.rotation.x = Math.PI / 2;
+    plate.position.set(x, y, 0.02);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(r * 0.72, 0.012, 6, 24), mat(colors[i], 0.4));
+    ring.position.set(x, y, 0.035);
+    const dot = new THREE.Mesh(new THREE.CircleGeometry(r * 0.3, 12), mat(colors[(i + 2) % colors.length], 0.4));
+    dot.position.set(x, y, 0.034);
+    g.add(plate, ring, dot);
+  });
+  return g;
+}
+
+function pantryShelf(): THREE.Group {
+  const g = new THREE.Group();
+  const wood = new THREE.MeshStandardMaterial({ map: createWoodTexture('#a8683a', '#6b3d1d', 1), roughness: 0.5 });
+  const shelf = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.05, 0.3), wood);
+  shelf.position.set(0, -0.18, 0.15);
+  g.add(shelf);
+  for (const x of [-0.45, 0.45]) {
+    const br = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.16, 0.24), wood);
+    br.position.set(x, -0.27, 0.12);
+    g.add(br);
+  }
+  const glass = new THREE.MeshStandardMaterial({ color: '#e7f4f6', transparent: true, opacity: 0.45, roughness: 0.05 });
+  const fills = ['#e2b33c', '#b84a2a', '#f1e6d2', '#6b3a23', '#3f7a4a'];
+  fills.forEach((c, i) => {
+    const h = 0.18 + (i % 2) * 0.08;
+    const x = -0.44 + i * 0.22;
+    const jar = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, h, 12), glass);
+    jar.position.set(x, -0.155 + h / 2, 0.15);
+    const fill = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, h * 0.75, 12), mat(c, 0.7));
+    fill.position.set(x, -0.155 + (h * 0.75) / 2 + 0.005, 0.15);
+    const lid = new THREE.Mesh(new THREE.CylinderGeometry(0.072, 0.072, 0.03, 12), mat('#b8862f', 0.3, 0.7));
+    lid.position.set(x, -0.155 + h + 0.015, 0.15);
+    g.add(jar, fill, lid);
+  });
+  return g;
+}
+
+function goldMirror(): THREE.Group {
+  const g = new THREE.Group();
+  const gold = mat('#c89b3c', 0.25, 0.85);
+  const outer = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.05, 40), gold);
+  outer.rotation.x = Math.PI / 2;
+  outer.scale.set(1, 1, 1.22);
+  outer.position.z = 0.025;
+  const glass = new THREE.Mesh(
+    new THREE.CircleGeometry(0.38, 40),
+    new THREE.MeshStandardMaterial({ color: '#dceef3', roughness: 0.08, metalness: 0.55, emissive: '#9fb9c2', emissiveIntensity: 0.25 })
+  );
+  glass.scale.set(1, 1.22, 1);
+  glass.position.z = 0.052;
+  g.add(outer, glass);
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    const bead = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 6), gold);
+    bead.position.set(Math.cos(a) * 0.47, Math.sin(a) * 0.57, 0.04);
+    g.add(bead);
+  }
+  return g;
+}
+
+function neonSign(glows: GlowMat[]): THREE.Group {
+  const g = new THREE.Group();
+  const board = new THREE.Mesh(new RoundedBoxGeometry(1.15, 0.5, 0.03, 2, 0.02), new THREE.MeshStandardMaterial({ color: '#1b1716', transparent: true, opacity: 0.85 }));
+  board.position.z = 0.015;
+  g.add(board);
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 112;
+  const x = c.getContext('2d')!;
+  x.font = 'bold 78px "Trebuchet MS", sans-serif';
+  x.textAlign = 'center';
+  x.textBaseline = 'middle';
+  x.shadowColor = '#ff4fa3';
+  x.shadowBlur = 18;
+  x.fillStyle = '#ffd1ea';
+  x.fillText('YUM', 128, 58);
+  x.lineWidth = 3;
+  x.strokeStyle = '#ff4fa3';
+  x.strokeText('YUM', 128, 58);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  const text = new THREE.Mesh(new THREE.PlaneGeometry(1.05, 0.46), new THREE.MeshBasicMaterial({ map: t, transparent: true, toneMapped: false }));
+  text.position.z = 0.04;
+  g.add(text);
+  const halo = createGlowSprite('#ff5fb0', 1.6, 0.4, glows);
+  halo.position.z = 0.1;
+  g.add(halo);
+  return g;
+}
+
+function wallLantern(glows: GlowMat[]): THREE.Group {
+  const g = new THREE.Group();
+  const iron = mat('#2b2622', 0.4, 0.6);
+  const brass = mat('#c89b3c', 0.3, 0.85);
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.22, 0.03), iron);
+  plate.position.set(0, 0.12, 0.015);
+  const arm = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.012, 6, 16, Math.PI), iron);
+  arm.rotation.y = Math.PI / 2;
+  arm.position.set(0, 0.12, 0.14);
+  const cage = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.08, 0.24, 6), new THREE.MeshStandardMaterial({ color: '#ffe7a8', emissive: '#ffb84d', emissiveIntensity: 1, transparent: true, opacity: 0.85 }));
+  cage.position.set(0, -0.08, 0.28);
+  const cap = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.12, 6), brass);
+  cap.position.set(0, 0.1, 0.28);
+  const halo = createGlowSprite('#ffc06a', 1.0, 0.55, glows);
+  halo.position.set(0, -0.08, 0.3);
+  const wash = createLightPool('#ffc06a', 0.7, 0.18, glows);
+  wash.rotation.set(0, 0, 0);
+  wash.position.set(0, -0.1, 0.01);
+  g.add(plate, arm, cage, cap, halo, wash);
+  return g;
+}
+
+/** Existing restaurant wall pieces, shifted so their back sits on the wall. */
+function wallSconce(glows: GlowMat[], theme?: CafeThemeDef): THREE.Group {
+  const g = new THREE.Group();
+  const lamp = createWallSconceMesh(theme?.lightColor ?? '#fde68a');
+  lamp.position.z = 0.04;
+  const halo = createGlowSprite(theme?.lightColor ?? '#fde68a', 1.0, 0.45, glows);
+  halo.position.set(0, -0.08, 0.21);
+  const wash = createLightPool(theme?.lightColor ?? '#fde68a', 0.9, 0.18, glows);
+  wash.rotation.set(0, 0, 0);
+  wash.position.set(0, -0.18, 0.02);
+  g.add(lamp, halo, wash);
+  return g;
+}
+
+// ---- Counters ----
+
+function hostStand(glows: GlowMat[]): THREE.Group {
+  const g = new THREE.Group();
+  shadow(g, 0.42, 0.32);
+  const wood = new THREE.MeshStandardMaterial({ map: createWoodTexture('#9a5e33', '#5f3519', 1), roughness: 0.45 });
+  const body = new THREE.Mesh(new RoundedBoxGeometry(0.7, 1.0, 0.5, 2, 0.04), wood);
+  body.position.y = 0.5;
+  const top = new THREE.Mesh(new RoundedBoxGeometry(0.76, 0.05, 0.56, 2, 0.02), mat('#2b2622', 0.35));
+  top.position.set(0, 1.03, 0);
+  top.rotation.x = -0.15;
+  const book = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.03, 0.22), mat('#7c2d22', 0.6));
+  book.position.set(-0.1, 1.07, 0.02);
+  book.rotation.x = -0.15;
+  const lampPole = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.3, 6), mat('#b8862f', 0.3, 0.8));
+  lampPole.position.set(0.22, 1.2, -0.12);
+  const lampShade = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.08, 14, 1, true), new THREE.MeshStandardMaterial({ color: '#1f6b4f', side: THREE.DoubleSide, emissive: '#ffcf87', emissiveIntensity: 0.2 }));
+  lampShade.position.set(0.22, 1.36, -0.12);
+  const halo = createGlowSprite('#ffd08a', 0.5, 0.45, glows);
+  halo.position.set(0.22, 1.32, -0.12);
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.71, 0.06, 0.51), mat('#b8862f', 0.3, 0.8));
+  stripe.position.y = 0.85;
+  g.add(body, top, book, lampPole, lampShade, halo, stripe);
+  return g;
+}
+
+function glassCase(w: number, d: number, h: number): THREE.Mesh {
+  const glass = new THREE.Mesh(
+    new THREE.BoxGeometry(w, h, d),
+    new THREE.MeshStandardMaterial({ color: '#e6f4f8', transparent: true, opacity: 0.25, roughness: 0.03, depthWrite: false })
+  );
+  return glass;
+}
+
+function pastryCase(): THREE.Group {
+  const g = new THREE.Group();
+  shadow(g, 0.88, 0.42);
+  const wood = new THREE.MeshStandardMaterial({ map: createWoodTexture('#d0904f', '#9a5f2c', 1), roughness: 0.45 });
+  const base = new THREE.Mesh(new RoundedBoxGeometry(1.55, 0.8, 0.65, 2, 0.03), wood);
+  base.position.y = 0.4;
+  const top = new THREE.Mesh(new THREE.BoxGeometry(1.58, 0.04, 0.68), mat('#f4f1eb', 0.2));
+  top.position.y = 0.82;
+  const glass = glassCase(1.5, 0.6, 0.45);
+  glass.position.y = 1.06;
+  const shelf = new THREE.Mesh(new THREE.BoxGeometry(1.44, 0.02, 0.5), mat('#f8fafc', 0.2));
+  shelf.position.y = 1.06;
+  g.add(base, top, shelf);
+  const treats = (y: number, colors: string[]) =>
+    colors.forEach((c, i) => {
+      const x = -0.55 + i * 0.37;
+      const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.12, 0.015, 16), mat('#ffffff', 0.2));
+      plate.position.set(x, y + 0.01, 0);
+      const cake = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.09, 16), mat(c, 0.55));
+      cake.position.set(x, y + 0.06, 0);
+      const top = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 6), mat(i % 2 ? '#d2263a' : '#fff4dd', 0.4));
+      top.position.set(x, y + 0.12, 0);
+      g.add(plate, cake, top);
+    });
+  treats(0.84, ['#6b3a23', '#f4d7df', '#f2c96b', '#c5e0b4']);
+  // Croissants on the top shelf
+  for (let i = 0; i < 4; i++) {
+    const cr = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.03, 6, 10, Math.PI * 1.3), mat('#d99a4e', 0.6));
+    cr.rotation.x = -Math.PI / 2;
+    cr.position.set(-0.5 + i * 0.33, 1.1, 0.02);
+    g.add(cr);
+  }
+  g.add(glass);
+  return g;
+}
+
+function juiceBar(): THREE.Group {
+  const g = new THREE.Group();
+  shadow(g, 0.98, 0.45);
+  const body = new THREE.Mesh(new RoundedBoxGeometry(1.75, 0.95, 0.7, 2, 0.04), mat('#f6efe0', 0.5));
+  body.position.y = 0.475;
+  const front = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.6, 0.02), mat('#3fae8e', 0.5));
+  front.position.set(0, 0.48, 0.355);
+  const top = new THREE.Mesh(new RoundedBoxGeometry(1.82, 0.05, 0.76, 2, 0.02), mat('#d0904f', 0.4));
+  top.position.y = 0.97;
+  g.add(body, front, top);
+  // Fruit bowls, a juicer and juice jars
+  const bowl = (x: number, fruit: string) => {
+    const b = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.1, 0.08, 16), mat('#ffffff', 0.3));
+    b.position.set(x, 1.04, 0.05);
+    g.add(b);
+    for (let i = 0; i < 5; i++) {
+      const f = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 6), mat(fruit, 0.45));
+      f.position.set(x + Math.cos(i * 1.3) * 0.07, 1.1 + (i % 2) * 0.03, 0.05 + Math.sin(i * 1.3) * 0.07);
+      g.add(f);
+    }
+  };
+  bowl(-0.6, '#f59e0b');
+  bowl(-0.25, '#facc15');
+  const juicer = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.3, 14), mat('#cbd5e1', 0.25, 0.8));
+  juicer.position.set(0.15, 1.15, -0.1);
+  const jug = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.22, 14), new THREE.MeshStandardMaterial({ color: '#ffd7a0', transparent: true, opacity: 0.8 }));
+  jug.position.set(0.15, 1.11, 0.12);
+  g.add(juicer, jug);
+  ['#f97316', '#ec4899', '#84cc16'].forEach((c, i) => {
+    const glass = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.04, 0.14, 12), new THREE.MeshStandardMaterial({ color: c, transparent: true, opacity: 0.85 }));
+    glass.position.set(0.45 + i * 0.14, 1.07, 0.12);
+    const straw = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.16, 4), mat('#ffffff', 0.4));
+    straw.position.set(0.47 + i * 0.14, 1.17, 0.12);
+    straw.rotation.z = -0.25;
+    g.add(glass, straw);
+  });
+  return g;
+}
+
+function barCounter(): THREE.Group {
+  const g = new THREE.Group();
+  shadow(g, 1.3, 0.62);
+  const wood = new THREE.MeshStandardMaterial({ map: createWoodTexture('#7a4526', '#4a2614', 1), roughness: 0.35 });
+  const body = new THREE.Mesh(new RoundedBoxGeometry(2.35, 1.0, 0.55, 2, 0.04), wood);
+  body.position.set(0, 0.5, -0.28);
+  const top = new THREE.Mesh(new RoundedBoxGeometry(2.42, 0.06, 0.68, 2, 0.03), new THREE.MeshPhysicalMaterial({ color: '#5b331b', roughness: 0.2, clearcoat: 1 }));
+  top.position.set(0, 1.03, -0.24);
+  const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 2.3, 8), mat('#c89b3c', 0.3, 0.85));
+  rail.rotation.z = Math.PI / 2;
+  rail.position.set(0, 0.2, 0.02);
+  g.add(body, top, rail);
+  for (let i = -1; i <= 1; i++) {
+    const x = i * 0.78;
+    const stool = new THREE.Group();
+    const seat = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.08, 18), mat('#b23a3a', 0.55));
+    seat.position.y = 0.72;
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.68, 8), mat('#cbd5e1', 0.25, 0.8));
+    pole.position.y = 0.36;
+    const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, 0.03, 16), mat('#cbd5e1', 0.25, 0.8));
+    foot.position.y = 0.015;
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.012, 6, 16), mat('#cbd5e1', 0.25, 0.8));
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.3;
+    stool.add(seat, pole, foot, ring);
+    stool.position.set(x, 0, 0.3);
+    g.add(stool);
+    const glass = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.035, 0.12, 12), new THREE.MeshStandardMaterial({ color: '#f5d48a', transparent: true, opacity: 0.8 }));
+    glass.position.set(x, 1.12, -0.12);
+    g.add(glass);
+  }
+  return g;
+}
+
 /**
  * Builds a non-seating decoration. Lamps and tanks add their glow sprites to `glows`
  * so they brighten at night with the rest of the restaurant.
@@ -630,6 +1154,68 @@ export function createDecorMesh(item: DecorItemId, glows: GlowMat[] = [], theme?
     case 'piano':
       g = piano();
       break;
+    case 'plant_monstera':
+      g = monstera();
+      break;
+    case 'plant_lemon':
+      g = lemonTree();
+      break;
+    case 'wall_sconce':
+      g = wallSconce(glows, theme);
+      break;
+    case 'burger_art': {
+      g = new THREE.Group();
+      const art = createFramedBurgerArtMesh(theme?.wainscotColor ?? '#9e5a37');
+      art.position.z = 0.06;
+      g.add(art);
+      break;
+    }
+    case 'ivy_shelf': {
+      g = new THREE.Group();
+      const ivy = createHangingIvyShelfMesh(theme?.wainscotColor ?? '#9e5a37');
+      ivy.position.z = 0.19;
+      g.add(ivy);
+      break;
+    }
+    case 'frame_landscape':
+      g = landscapePainting();
+      break;
+    case 'wall_clock':
+      g = stationClock();
+      break;
+    case 'frame_trio':
+      g = pictureTrio();
+      break;
+    case 'string_lights':
+      g = stringLights(glows);
+      break;
+    case 'plate_display':
+      g = plateDisplay();
+      break;
+    case 'wall_shelf_jars':
+      g = pantryShelf();
+      break;
+    case 'mirror_gold':
+      g = goldMirror();
+      break;
+    case 'neon_sign':
+      g = neonSign(glows);
+      break;
+    case 'wall_lantern':
+      g = wallLantern(glows);
+      break;
+    case 'host_stand':
+      g = hostStand(glows);
+      break;
+    case 'pastry_case':
+      g = pastryCase();
+      break;
+    case 'juice_bar':
+      g = juiceBar();
+      break;
+    case 'bar_counter':
+      g = barCounter();
+      break;
     default: {
       // Seating previews (menu pictures)
       const parts = createSeatingMesh(item, theme);
@@ -637,7 +1223,7 @@ export function createDecorMesh(item: DecorItemId, glows: GlowMat[] = [], theme?
       g = parts.group;
     }
   }
-  if (!DECOR_BY_ID[item].flat) cast(g);
+  if (!DECOR_BY_ID[item].flat && !DECOR_BY_ID[item].wall) cast(g);
   return g;
 }
 
