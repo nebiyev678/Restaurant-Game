@@ -2934,6 +2934,22 @@ export class RestaurantWorldEngine {
     const activePointers = new Map<number, { x: number; y: number }>();
     let camPointerId: number | null = null;
     let lastPinchDist = 0;
+    // Two-finger twist / sideways slide turns the camera (one finger on the left half is the joystick on phones)
+    let lastPinchAngle: number | null = null;
+    let lastPinchMidX: number | null = null;
+
+    const getPinchAngle = () => {
+      const pts = Array.from(activePointers.values());
+      return pts.length < 2 ? null : Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
+    };
+    const getPinchMidX = () => {
+      const pts = Array.from(activePointers.values());
+      return pts.length < 2 ? null : (pts[0].x + pts[1].x) / 2;
+    };
+    const resetTwoFinger = () => {
+      lastPinchAngle = getPinchAngle();
+      lastPinchMidX = getPinchMidX();
+    };
 
     const getPinchDist = () => {
       const pts = Array.from(activePointers.values());
@@ -2957,6 +2973,7 @@ export class RestaurantWorldEngine {
       } else if (activePointers.size === 2) {
         this.pointerMoved = true;
         lastPinchDist = getPinchDist();
+        resetTwoFinger();
       }
     };
 
@@ -2978,6 +2995,17 @@ export class RestaurantWorldEngine {
           );
         }
         lastPinchDist = dist;
+        const ang = getPinchAngle();
+        const midX = getPinchMidX();
+        if (ang !== null && lastPinchAngle !== null) {
+          let dAng = ang - lastPinchAngle;
+          if (dAng > Math.PI) dAng -= Math.PI * 2;
+          if (dAng < -Math.PI) dAng += Math.PI * 2;
+          this.camAzimuth += dAng;
+        }
+        if (midX !== null && lastPinchMidX !== null) this.camAzimuth -= (midX - lastPinchMidX) * 0.0065;
+        lastPinchAngle = ang;
+        lastPinchMidX = midX;
         return;
       }
 
@@ -3010,11 +3038,16 @@ export class RestaurantWorldEngine {
         this.draggingCam = false;
         camPointerId = null;
         lastPinchDist = 0;
+        lastPinchAngle = lastPinchMidX = null;
       } else if (activePointers.size === 1) {
         const [remainingId, pos] = Array.from(activePointers.entries())[0];
         camPointerId = remainingId;
         this.dragStart = { x: pos.x, y: pos.y };
         lastPinchDist = 0;
+        lastPinchAngle = lastPinchMidX = null;
+      } else {
+        lastPinchDist = getPinchDist();
+        resetTwoFinger();
       }
     };
 
