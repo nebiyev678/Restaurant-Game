@@ -20,6 +20,8 @@ export interface ShotOptions {
   focus?: 'full' | 'upper' | 'head';
   /** >1 adds space around the model, <1 zooms in. */
   padding?: number;
+  /** Colourful round badge behind the model: [centre colour, edge colour]. */
+  backdrop?: [string, string];
 }
 
 interface Framing {
@@ -53,12 +55,15 @@ class PreviewStudio {
   private failed = false;
 
   constructor() {
-    const hemi = new THREE.HemisphereLight('#ffffff', '#8a7a6a', 1.1);
-    const key = new THREE.DirectionalLight('#fff4e0', 1.7);
+    // Bright, warm "food photo" lighting: strong key, soft fill and a cool rim to pop the edges
+    const hemi = new THREE.HemisphereLight('#ffffff', '#9a8070', 1.25);
+    const key = new THREE.DirectionalLight('#fff1d6', 2.4);
     key.position.set(4, 7, 6);
-    const rim = new THREE.DirectionalLight('#cfe3ff', 0.7);
+    const fill = new THREE.DirectionalLight('#ffe9f0', 0.6);
+    fill.position.set(-5, 3, 4);
+    const rim = new THREE.DirectionalLight('#d6e8ff', 1.0);
     rim.position.set(-6, 4, -5);
-    this.scene.add(hemi, key, rim);
+    this.scene.add(hemi, key, fill, rim);
   }
 
   /** True when WebGL is unavailable; callers should fall back to an icon. */
@@ -98,7 +103,14 @@ class PreviewStudio {
   /** Computes a yaw-independent framing (bounding sphere) for an object. */
   frame(obj: THREE.Object3D, focus: ShotOptions['focus'] = 'full'): Framing {
     obj.updateMatrixWorld(true);
-    _box.setFromObject(obj, true);
+    // A model can ask to be framed on some of its parts (e.g. the food, not the whole plate)
+    const parts = obj.userData.frameOn as THREE.Object3D[] | undefined;
+    if (parts?.length) {
+      _box.makeEmpty();
+      for (const p of parts) _box.expandByObject(p, true);
+    } else {
+      _box.setFromObject(obj, true);
+    }
     if (_box.isEmpty()) return { center: new THREE.Vector3(), radius: 1 };
     if (focus !== 'full') {
       _box.getSize(_size);
@@ -149,8 +161,9 @@ class PreviewStudio {
       r.setPixelRatio(1);
       r.setClearColor(0x000000, 0);
       r.outputColorSpace = THREE.SRGBColorSpace;
-      r.toneMapping = THREE.ACESFilmicToneMapping;
-      r.toneMappingExposure = 1.12;
+      // Neutral tone mapping keeps food colours rich (ACES washes reds and yellows out)
+      r.toneMapping = THREE.NeutralToneMapping;
+      r.toneMappingExposure = 1.05;
       const pmrem = new THREE.PMREMGenerator(r);
       this.envTexture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
       pmrem.dispose();
@@ -203,7 +216,7 @@ class PreviewStudio {
           this.scene.add(obj);
           r.render(this.scene, this.camera);
           this.scene.remove(obj);
-          url = r.domElement.toDataURL('image/webp', 0.9);
+          url = job.opts.backdrop ? this.withBackdrop(r.domElement, job.size, job.opts.backdrop) : r.domElement.toDataURL('image/webp', 0.9);
         }
       } catch {
         url = '';
@@ -214,6 +227,45 @@ class PreviewStudio {
       requestAnimationFrame(step);
     };
     requestAnimationFrame(step);
+  }
+
+  /** Draws the render on a glossy coloured disc, like an app icon. */
+  private withBackdrop(src: HTMLCanvasElement, size: number, [inner, outer]: [string, string]): string {
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const x = c.getContext('2d');
+    if (!x) return src.toDataURL('image/webp', 0.9);
+    const r = size / 2;
+    const g = x.createRadialGradient(r * 0.8, r * 0.7, r * 0.1, r, r, r);
+    g.addColorStop(0, inner);
+    g.addColorStop(1, outer);
+    x.fillStyle = g;
+    x.beginPath();
+    x.arc(r, r, r - 1, 0, Math.PI * 2);
+    x.fill();
+    // Soft glossy highlight in the top-left
+    const hl = x.createRadialGradient(r * 0.62, r * 0.45, 0, r * 0.62, r * 0.45, r * 0.75);
+    hl.addColorStop(0, 'rgba(255,255,255,0.55)');
+    hl.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = hl;
+    x.beginPath();
+    x.arc(r, r, r - 1, 0, Math.PI * 2);
+    x.fill();
+    // Food shadow on the disc, then the food
+    x.save();
+    x.beginPath();
+    x.arc(r, r, r - 1, 0, Math.PI * 2);
+    x.clip();
+    // Juicier colours where the browser supports canvas filters
+    if ('filter' in x) x.filter = 'saturate(1.35) contrast(1.06)';
+    x.drawImage(src, 0, 0, size, size);
+    x.restore();
+    x.lineWidth = Math.max(2, size * 0.02);
+    x.strokeStyle = 'rgba(255,255,255,0.7)';
+    x.beginPath();
+    x.arc(r, r, r - x.lineWidth / 2 - 1, 0, Math.PI * 2);
+    x.stroke();
+    return c.toDataURL('image/webp', 0.92);
   }
 
   private scheduleRelease() {
