@@ -3831,7 +3831,17 @@ export class RestaurantWorldEngine {
       return;
     }
 
-    if (this.paused) return;
+    if (this.paused) {
+      // Let the chef settle into a standing pose instead of freezing mid-stride
+      if (this.chefRig && !this.inVehicle) {
+        updateChefRig(this.chefRig, { dt, moving: false, carrying: Boolean(this.heldRecipe), cookProp: null, expression: 'jolly' });
+        this.playerParts.root.updateMatrixWorld(true);
+        chefCarryPoint(this.chefRig, this.playerParts.root, this.playerParts.carryAnchor.position);
+        this.playerParts.carryAnchor.position.y += 0.05;
+        this.playerParts.carryAnchor.position.z += 0.06;
+      }
+      return;
+    }
 
     // 1. Player or Vehicle Movement
     this.updatePlayerMovement(dt);

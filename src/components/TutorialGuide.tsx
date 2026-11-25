@@ -1,5 +1,5 @@
-import React from 'react';
-import { ArrowUp } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { ArrowUp, ChevronDown, ChevronUp } from 'lucide-react';
 import { GUIDE_STEPS } from '../game/tutorial';
 
 interface TutorialGuideProps {
@@ -20,41 +20,73 @@ interface TutorialGuideProps {
 /** Step card for the guided beginner tutorial. */
 export const TutorialGuide: React.FC<TutorialGuideProps> = ({ step, isTouch, joystickSide = 'left', compact, ready, onNext, onSkip, onChooseSide, skipLabel = 'Skip tutorial', onHowToPlay }) => {
   const s = GUIDE_STEPS[step];
+  // Players can fold the card into a slim pill; a new step opens it again
+  const [folded, setFolded] = useState(false);
+  useEffect(() => setFolded(false), [step]);
   if (!s) return null;
   const hasButton = s.advance === 'button' || s.advance === 'order';
   const isLast = step === GUIDE_STEPS.length - 1;
+  const canFold = s.advance !== 'choose_side';
+  const nextButton = hasButton ? (
+    <button
+      onClick={onNext}
+      disabled={!ready}
+      className={`shrink-0 px-3 py-1.5 rounded-lg text-[12px] font-extrabold ${
+        ready ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 cursor-pointer' : 'bg-slate-800 text-slate-400 cursor-default'
+      }`}
+    >
+      {ready ? s.buttonLabel ?? 'Next' : s.waitingHint ?? 'Wait…'}
+    </button>
+  ) : null;
+  const top = compact ? 'calc(max(0.5rem, env(safe-area-inset-top)) + 5.6rem)' : '5.25rem';
+
+  if (folded && canFold) {
+    return (
+      <div className="fixed z-30 left-1/2 -translate-x-1/2 pointer-events-none" style={{ top }} role="dialog" aria-label={`Tutorial step ${step + 1}: ${s.title}`}>
+        <div className="pointer-events-auto flex items-center gap-2 rounded-full bg-slate-950/90 border border-amber-400/70 shadow-lg pl-2 pr-1 py-1">
+          <button onClick={() => setFolded(false)} className="flex items-center gap-1.5 cursor-pointer" aria-label="Show tutorial tip">
+            <span className="text-base leading-none" aria-hidden>{s.icon}</span>
+            <span className="text-[12px] font-bold text-white max-w-[44vw] truncate">{s.title}</span>
+            <span className="font-mono-num text-[10px] font-bold text-amber-300">{step + 1}/{GUIDE_STEPS.length}</span>
+            <ChevronDown className="w-4 h-4 text-slate-300" />
+          </button>
+          {nextButton ?? <span className="w-1" />}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
-      className="fixed z-30 left-1/2 -translate-x-1/2 pointer-events-none w-[min(92vw,380px)]"
-      style={{ top: compact ? 'calc(max(0.5rem, env(safe-area-inset-top)) + 6rem)' : '5.25rem' }}
+      className="fixed z-30 left-1/2 -translate-x-1/2 pointer-events-none w-[min(86vw,330px)]"
+      style={{ top }}
       role="dialog"
       aria-label={`Tutorial step ${step + 1} of ${GUIDE_STEPS.length}: ${s.title}`}
     >
-      <div className="pointer-events-auto rounded-2xl bg-slate-950/95 border-2 border-amber-400/80 shadow-2xl p-3 animate-slide-in">
-        <div className="flex items-start gap-2.5">
-          <div className="shrink-0 w-10 h-10 rounded-xl bg-amber-400/15 border border-amber-400/50 flex items-center justify-center text-2xl" aria-hidden>
-            {s.icon}
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between gap-2">
-              <p className="font-display font-extrabold text-white text-[15px] leading-tight">{s.title}</p>
-              <span className="shrink-0 font-mono-num text-[10px] font-bold text-amber-300">
-                {step + 1}/{GUIDE_STEPS.length}
-              </span>
-            </div>
-            <p className="mt-1 text-[12px] leading-snug text-slate-200">{(isTouch ? s.body.touch : s.body.desktop).replace('{side}', joystickSide)}</p>
-          </div>
+      <div className="pointer-events-auto rounded-xl bg-slate-950/90 border border-amber-400/70 shadow-xl px-2.5 py-2 animate-slide-in">
+        <div className="flex items-center gap-1.5">
+          <span className="text-lg leading-none" aria-hidden>{s.icon}</span>
+          <p className="flex-1 min-w-0 font-display font-extrabold text-white text-[13px] leading-tight truncate">{s.title}</p>
+          <span className="shrink-0 font-mono-num text-[10px] font-bold text-amber-300">
+            {step + 1}/{GUIDE_STEPS.length}
+          </span>
+          {canFold && (
+            <button onClick={() => setFolded(true)} className="shrink-0 -mr-1 p-1 text-slate-400 hover:text-white cursor-pointer" aria-label="Hide tutorial tip">
+              <ChevronUp className="w-4 h-4" />
+            </button>
+          )}
         </div>
+        <p className="mt-1 text-[11.5px] leading-snug text-slate-200">{(isTouch ? s.body.touch : s.body.desktop).replace('{side}', joystickSide)}</p>
 
         {s.advance === 'choose_side' && (
-          <div className="mt-3 grid grid-cols-2 gap-2" role="radiogroup" aria-label="Joystick side">
+          <div className="mt-2 grid grid-cols-2 gap-2" role="radiogroup" aria-label="Joystick side">
             {(['left', 'right'] as const).map((side) => (
               <button
                 key={side}
                 role="radio"
                 aria-checked={joystickSide === side}
                 onClick={() => onChooseSide?.(side)}
-                className={`relative h-24 rounded-xl border-2 cursor-pointer overflow-hidden ${
+                className={`relative h-20 rounded-xl border-2 cursor-pointer overflow-hidden ${
                   joystickSide === side ? 'border-amber-400 bg-amber-400/10' : 'border-slate-700 bg-slate-900'
                 }`}
               >
@@ -83,42 +115,23 @@ export const TutorialGuide: React.FC<TutorialGuideProps> = ({ step, isTouch, joy
           </div>
         )}
 
-        {/* Progress dots */}
-        <div className="mt-2.5 flex items-center gap-1" aria-hidden>
-          {GUIDE_STEPS.map((_, i) => (
-            <span
-              key={i}
-              className={`h-1.5 rounded-full transition-all ${i < step ? 'w-3 bg-amber-400' : i === step ? 'w-6 bg-amber-300' : 'w-3 bg-slate-700'}`}
-            />
-          ))}
-        </div>
-
-        <div className="mt-2.5 flex items-center justify-between gap-2">
+        <div className="mt-1.5 flex items-center justify-between gap-2">
           {isLast ? (
             <button onClick={onHowToPlay} className="text-[11px] font-bold text-sky-300 hover:text-sky-200 cursor-pointer">
               How to play
             </button>
           ) : (
-            <button onClick={onSkip} className="text-[11px] font-semibold text-slate-400 hover:text-slate-200 cursor-pointer">
+            <button onClick={onSkip} className="text-[10.5px] font-semibold text-slate-500 hover:text-slate-200 cursor-pointer">
               {skipLabel}
             </button>
           )}
-          {hasButton ? (
-            <button
-              onClick={onNext}
-              disabled={!ready}
-              className={`px-4 py-2 rounded-xl text-sm font-extrabold ${
-                ready ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 cursor-pointer' : 'bg-slate-800 text-slate-400 cursor-default'
-              }`}
-            >
-              {ready ? s.buttonLabel ?? 'Next' : s.waitingHint ?? 'Wait…'}
-            </button>
-          ) : s.advance === 'choose_side' ? null : (
-            <span className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-200">
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-              {s.waitingHint}
-            </span>
-          )}
+          {nextButton ??
+            (s.advance === 'choose_side' ? null : (
+              <span className="flex items-center gap-1.5 text-[10.5px] font-semibold text-amber-200 min-w-0">
+                <span className="w-1.5 h-1.5 shrink-0 rounded-full bg-amber-400 animate-pulse" />
+                <span className="truncate">{s.waitingHint}</span>
+              </span>
+            ))}
         </div>
       </div>
     </div>

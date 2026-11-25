@@ -112,23 +112,22 @@ function makeRig(scene: THREE.Group, clips: THREE.AnimationClip[]): ChefRig {
   };
 }
 
-function play(rig: ChefRig, name: string) {
-  if (rig.current === name) return;
+function play(rig: ChefRig, name: string, restart = false) {
+  if (rig.current === name && !restart) return;
   const next = rig.actions[name];
-  const prev = rig.actions[rig.current];
   if (!next) return;
   next.reset();
   next.setEffectiveWeight(1);
   next.fadeIn(FADE).play();
-  prev?.fadeOut(FADE);
+  // Fade out every other clip still contributing, so no old walk cycle lingers in the blend
+  for (const [k, a] of Object.entries(rig.actions)) if (k !== name && a.isRunning()) a.fadeOut(FADE);
   rig.current = name;
 }
 
 /** Plays the one-shot serving animation (lean in, set the plate down, nod). */
 export function triggerChefServe(rig: ChefRig) {
   rig.serveT = rig.actions.Serve ? rig.actions.Serve.getClip().duration : 0;
-  rig.current = '';
-  play(rig, 'Serve');
+  play(rig, 'Serve', true);
 }
 
 /** A short surprised face (eyes wide, brows up). */
