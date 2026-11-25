@@ -3660,6 +3660,12 @@ export class RestaurantWorldEngine {
     sound.playCash();
   }
 
+  /** Where a cook stands to work a machine: just in front of it, close enough to reach the top. */
+  private workSpot(st: { type: StationType; mx: number; mz: number }): { x: number; z: number } {
+    // Machine fronts: kitchen machines face +x (front ≈ mx + 0.58), the drink bar faces +z (≈ mz + 0.57)
+    return st.type === 'bar' ? { x: st.mx, z: st.mz + 0.88 } : { x: st.mx + 0.88, z: st.mz };
+  }
+
   /** Upgrade celebrations (bounce + sparkles) and the occasional glint on Master machines. */
   private updateStationLooks(dt: number) {
     for (const c of this.stationCelebrations) {
@@ -4095,7 +4101,7 @@ export class RestaurantWorldEngine {
         this.resolveWorldCollision(this.playerPos, 0.32, true, true);
       }
       // The chef works the machine while a dish cooks in front of them
-      let cookAt: { type: StationType; mx: number; mz: number } | null = null;
+      let cookAt: { type: StationType; x: number; z: number; mx: number; mz: number } | null = null;
       if (!moving && !this.heldRecipe) {
         for (const job of this.cookJobs.values()) {
           if (job.done) continue;
@@ -4106,7 +4112,14 @@ export class RestaurantWorldEngine {
           }
         }
       }
-      if (cookAt) this.playerYaw = this.lerpAngle(this.playerYaw, Math.atan2(cookAt.mx - this.playerPos.x, cookAt.mz - this.playerPos.z), 10 * dt);
+      if (cookAt) {
+        // Step up to the machine (still inside its circle) and face it while working
+        const spot = this.workSpot(cookAt);
+        this.playerPos.x = THREE.MathUtils.damp(this.playerPos.x, spot.x, 6, dt);
+        this.playerPos.z = THREE.MathUtils.damp(this.playerPos.z, spot.z, 6, dt);
+        this.resolveWorldCollision(this.playerPos, 0.32, true, true);
+        this.playerYaw = this.lerpAngle(this.playerYaw, Math.atan2(cookAt.mx - this.playerPos.x, cookAt.mz - this.playerPos.z), 10 * dt);
+      }
       this.playerJoy = Math.max(0, this.playerJoy - dt);
       // Smoothly follow the ground (steps, kerbs); the walk bob is added on top
       const targetGroundY = this.getGroundHeight(this.playerPos.x, this.playerPos.z);
@@ -5169,7 +5182,9 @@ export class RestaurantWorldEngine {
               const eqLv = save.equipmentLevels[stType] ?? 1;
               const eqSpeedMult = 1 + (eqLv - 1) * 0.12;
               agent.targetOrderId = waitingOrder.id;
-              this.setStaffDestination(agent, st.x + 0.35, st.z);
+              // Step right up to the machine's front so the tools reach the cooking surface
+              const spot = this.workSpot(st);
+              this.setStaffDestination(agent, spot.x, spot.z);
               agent.facingYaw = st.type === 'bar' ? Math.PI : -Math.PI / 2;
               agent.poseMode = 'cooking';
               agent.state = 'working';
