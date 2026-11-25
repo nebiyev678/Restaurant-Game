@@ -630,6 +630,8 @@ export default function App() {
 
   // Only roster/level changes matter to the 3D world, not per-task XP ticks
   const staffSyncKey = save.staff.map((m) => `${m.id}:${m.level}`).join('|');
+  const equipSyncKey = Object.entries(save.equipmentLevels ?? {}).sort().join(',');
+  const expansionsKey = [...(save.expansions ?? [])].sort().join(',');
 
   // Sync 3D world whenever tier, cafe theme, clothes, house, furniture, vehicle, or staff change
   useEffect(() => {
@@ -646,6 +648,11 @@ export default function App() {
     staffSyncKey,
     save.unlockedRecipes,
     save.activeCuisine,
+    // Flooring and wallpaper bought in design mode rebuild the room
+    save.layout?.floor,
+    save.layout?.wall,
+    equipSyncKey,
+    expansionsKey,
   ]);
 
   useEffect(() => {
