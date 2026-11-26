@@ -322,6 +322,7 @@ export default function App() {
   const [lockedPopup, setLockedPopup] = useState<StationType | null>(null);
   // Tapping the money pill opens the details panel (level, cleanliness, streak, special)
   const [showStatus, setShowStatus] = useState(false);
+  const lastCookStartRef = useRef(0);
   const [cookModal, setCookModal] = useState<{
     station: StationType;
     suggestedOrder: CustomerOrder | null;
@@ -1427,9 +1428,12 @@ export default function App() {
     setCookModal(null);
     // The dish now cooks on its machine for a few seconds (progress shows on the machine sign)
     if (!engineRef.current?.startCookJob(recipeId, qualityBonus)) {
+      // A repeat of the dish that was just started (double tap): nothing to tell the player
+      if (Date.now() - lastCookStartRef.current < 1500) return;
       showToast(`${STATION_INFO[RECIPES[recipeId].station].short} is busy`, 'Take the finished dish off the machine first.');
       return;
     }
+    lastCookStartRef.current = Date.now();
     haptic(qualityBonus > 1 ? HAPTIC.perfect : HAPTIC.action);
     guideEventRef.current('cook');
     commitSave((prev) => ({

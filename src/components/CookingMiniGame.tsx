@@ -118,9 +118,9 @@ export const CookingMiniGame: React.FC<CookingMiniGameProps> = ({
       setStepIndex(2);
       // Dish goes straight into the chef's hands after a short "Perfect!" flash
       window.setTimeout(() => onComplete(selectedRecipe, bonus, actualCost), 450);
-    } else if (stepIndex === 2) {
-      onComplete(selectedRecipe, qualityBonus, actualCost);
     }
+    // Step 2 is only the short "Perfect!" flash: the dish is already on its way (sent once above).
+    // Calling onComplete again here started a second cook on a busy machine and showed "… is busy".
   };
 
   const handleQuickPrep = () => {
