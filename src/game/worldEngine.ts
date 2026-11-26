@@ -93,7 +93,8 @@ import {
   createHangingIvyShelfMesh,
   createHouseStructure,
   createIngredientShelfMesh,
-  createCoveredMachineMesh,
+  createLockedMachinePreview,
+  updateLockedMachinePreview,
   createKitchenStationMesh,
   createMenuBoardMesh,
   createPassThroughCounterMesh,
@@ -429,6 +430,8 @@ export class RestaurantWorldEngine {
   private tables: SimTable[] = [];
   /** Installed (active) machines. x/z = where the cook stands; mx/mz = the machine itself. */
   private stations: { type: StationType; x: number; z: number; mx: number; mz: number; ring: THREE.Mesh }[] = [];
+  /** Machines not unlocked yet: see-through previews with what unlocks them (no colliders). */
+  private lockedPreviews: { type: StationType; mesh: THREE.Group; x: number; z: number; recipeId: RecipeId | null }[] = [];
   private lastStationsKey = '';
   /** Called right after every rendered frame (HUD uses it to keep 3D-anchored icons glued on). */
   private frameListener: (() => void) | null = null;
@@ -1382,6 +1385,7 @@ export class RestaurantWorldEngine {
       this.tablesGroup.remove(this.tablesGroup.children[0]);
     }
     this.stations = [];
+    this.lockedPreviews = [];
     this.restaurantColliders = [];
 
     const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
@@ -1815,13 +1819,12 @@ export class RestaurantWorldEngine {
         if (equipmentStage(level) === 3) this.masterStations.add(st.type);
         else this.masterStations.delete(st.type);
       } else {
-        // Machines not unlocked yet arrive covered and strapped, tagged with what they'll cook
+        // Machines not unlocked yet: a glowing see-through preview; the sign above shows price and level
         const upcoming = RECIPE_LIST.filter((r) => r.station === st.type && cuisineMenu.includes(r.id) && !unlockedSet.has(r.id)).sort(
-          (a, b) => a.requiredLevel - b.requiredLevel
+          (a, b) => a.requiredLevel - b.requiredLevel || a.unlockCost - b.unlockCost
         );
-        const first = upcoming[0];
-        const level = first?.requiredLevel ?? 1;
-        mesh = createCoveredMachineMesh(st.type, first?.name ?? STATION_INFO[st.type].short, level);
+        mesh = createLockedMachinePreview(st.type);
+        this.lockedPreviews.push({ type: st.type, mesh, x: st.x, z: st.z, recipeId: upcoming[0]?.id ?? null });
         this.stationMeshes.delete(st.type);
         this.masterStations.delete(st.type);
       }
@@ -1841,6 +1844,9 @@ export class RestaurantWorldEngine {
       }
 
 
+      // Locked previews are see-through and never block anyone
+      if (!isActive) return;
+
       if (st.type === 'bar') {
         this.restaurantColliders.push({
           kind: 'aabb',
@@ -1858,8 +1864,6 @@ export class RestaurantWorldEngine {
           maxZ: st.z + 0.92,
         });
       }
-
-      if (!isActive) return;
 
       // Subtle floor interaction highlight ring in front of station
       const ring = new THREE.Mesh(
@@ -3732,6 +3736,7 @@ export class RestaurantWorldEngine {
 
   /** Upgrade celebrations (bounce + sparkles) and the occasional glint on Master machines. */
   private updateStationLooks(dt: number) {
+    for (const lp of this.lockedPreviews) updateLockedMachinePreview(lp.mesh, dt);
     for (const c of this.stationCelebrations) {
       const mesh = this.stationMeshes.get(c.type);
       const st = this.stations.find((s) => s.type === c.type);
@@ -5588,6 +5593,29 @@ export class RestaurantWorldEngine {
           stationType: st.type,
           recipeIds,
           pendingCount: this.allNeededDishes().filter((r) => RECIPES[r].station === st.type).length,
+        });
+      }
+      // Locked machines: what they'll cook, the level that unlocks them and the price
+      const save = this.saveRef.current;
+      for (const lp of this.lockedPreviews) {
+        if (!lp.recipeId) continue;
+        const p = this.projectToScreen(lp.x, 2.05, lp.z);
+        if (!p.visible) continue;
+        const def = RECIPES[lp.recipeId];
+        bubbles.push({
+          id: `locked_${lp.type}`,
+          screenX: p.x,
+          screenY: p.y,
+          visible: true,
+          kind: 'station',
+          anchor: { x: lp.x, y: 2.05, z: lp.z },
+          label: def.name,
+          stationType: lp.type,
+          recipeIds: [lp.recipeId],
+          locked: true,
+          unlockLevel: def.requiredLevel,
+          unlockCost: def.unlockCost,
+          unlockNeedsLine: Boolean(def.recipeLine && !save.unlockedSpecialtyLines.includes(def.recipeLine)),
         });
       }
     }

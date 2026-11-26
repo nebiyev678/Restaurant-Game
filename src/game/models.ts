@@ -5033,3 +5033,142 @@ export function createKitchenBinMesh(): THREE.Group {
   g.add(body, rim, lid, hinge, pedal, base, label);
   return g;
 }
+
+/**
+ * A machine the player hasn't unlocked yet: a see-through blue preview of the real
+ * machine on a glowing floor plate, with a gold padlock floating above it.
+ * Animate with updateLockedMachinePreview. It has no collider: people walk through it.
+ */
+export function createLockedMachinePreview(type: StationType): THREE.Group {
+  const g = new THREE.Group();
+  g.name = 'LockedPreview';
+  const machine = createKitchenStationMesh(type, 2);
+  const box = new THREE.Box3().setFromObject(machine);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+
+  const ghostMat = new THREE.MeshStandardMaterial({
+    color: '#4fb0ee',
+    emissive: '#1478c8',
+    emissiveIntensity: 0.8,
+    roughness: 0.35,
+    metalness: 0,
+    transparent: true,
+    opacity: 0.3,
+    depthWrite: false,
+  });
+  const edgeMat = new THREE.LineBasicMaterial({ color: '#9fe6ff', transparent: true, opacity: 0.85, depthWrite: false });
+  const edges: THREE.LineSegments[] = [];
+  machine.updateMatrixWorld(true);
+  machine.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    m.material = ghostMat;
+    m.castShadow = false;
+    m.receiveShadow = false;
+    m.renderOrder = 2;
+    // Crisp outline on the bigger shapes only (keeps line count low)
+    const gb = (m.geometry.boundingBox ?? (m.geometry.computeBoundingBox(), m.geometry.boundingBox))!;
+    const gs = gb.getSize(new THREE.Vector3()).multiply(m.getWorldScale(new THREE.Vector3()));
+    if (Math.max(gs.x, gs.y, gs.z) > 0.28) {
+      const line = new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry, 35), edgeMat);
+      line.renderOrder = 3;
+      m.add(line);
+      edges.push(line);
+    }
+  });
+  g.add(machine);
+
+  // Glowing floor plate under the footprint
+  const plateW = size.x + 0.22;
+  const plateD = size.z + 0.22;
+  const plate = new THREE.Mesh(
+    new RoundedBoxGeometry(plateW, 0.03, plateD, 2, 0.05),
+    new THREE.MeshStandardMaterial({ color: '#13283a', roughness: 0.3, metalness: 0.4, transparent: true, opacity: 0.72 })
+  );
+  plate.position.set(center.x, 0.015, center.z);
+  plate.receiveShadow = true;
+  g.add(plate);
+  const rimMat = new THREE.MeshBasicMaterial({ color: '#5cc8ff', transparent: true, opacity: 0.8, depthWrite: false });
+  const rim = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(plateW - 0.06, plateD - 0.06)), rimMat);
+  rim.rotation.x = -Math.PI / 2;
+  rim.position.set(center.x, 0.035, center.z);
+  g.add(rim);
+
+  // Gold padlock
+  const lock = new THREE.Group();
+  const gold = new THREE.MeshStandardMaterial({ color: '#f5b52e', metalness: 0.75, roughness: 0.28, emissive: '#7a4a00', emissiveIntensity: 0.35 });
+  const body = new THREE.Mesh(new RoundedBoxGeometry(0.26, 0.21, 0.1, 3, 0.04), gold);
+  body.castShadow = true;
+  lock.add(body);
+  const shackle = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.022, 10, 20, Math.PI), new THREE.MeshStandardMaterial({ color: '#d9dee5', metalness: 0.9, roughness: 0.2 }));
+  shackle.position.y = 0.105;
+  lock.add(shackle);
+  for (const sx of [-0.075, 0.075]) {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.05, 10), shackle.material);
+    leg.position.set(sx, 0.105, 0);
+    lock.add(leg);
+  }
+  const hole = new THREE.Mesh(new THREE.CircleGeometry(0.03, 14), new THREE.MeshBasicMaterial({ color: '#3b2400' }));
+  hole.position.set(0, 0.01, 0.051);
+  lock.add(hole);
+  const holeBack = hole.clone();
+  holeBack.position.z = -0.051;
+  holeBack.rotation.y = Math.PI;
+  lock.add(holeBack);
+  const lockY = box.max.y + 0.32;
+  lock.position.set(center.x, lockY, center.z);
+  g.add(lock);
+
+  // A few rising sparkles
+  const N = 14;
+  const sparkPos = new Float32Array(N * 3);
+  const seeds: number[] = [];
+  for (let i = 0; i < N; i++) {
+    seeds.push(Math.random());
+    sparkPos[i * 3] = center.x + (Math.random() - 0.5) * size.x;
+    sparkPos[i * 3 + 2] = center.z + (Math.random() - 0.5) * size.z;
+  }
+  const sparkGeo = new THREE.BufferGeometry();
+  sparkGeo.setAttribute('position', new THREE.BufferAttribute(sparkPos, 3));
+  const sparks = new THREE.Points(
+    sparkGeo,
+    new THREE.PointsMaterial({ color: '#c9efff', size: 0.05, transparent: true, opacity: 0.8, depthWrite: false, sizeAttenuation: true })
+  );
+  g.add(sparks);
+
+  g.userData.lockedFx = { ghostMat, edgeMat, rimMat, lock, lockY, sparks, seeds, height: box.max.y, t: Math.random() * 10 };
+  return g;
+}
+
+export function updateLockedMachinePreview(g: THREE.Group, dt: number) {
+  const fx = g.userData.lockedFx as
+    | {
+        ghostMat: THREE.MeshStandardMaterial;
+        edgeMat: THREE.LineBasicMaterial;
+        rimMat: THREE.MeshBasicMaterial;
+        lock: THREE.Group;
+        lockY: number;
+        sparks: THREE.Points;
+        seeds: number[];
+        height: number;
+        t: number;
+      }
+    | undefined;
+  if (!fx) return;
+  fx.t += dt;
+  const pulse = 0.5 + 0.5 * Math.sin(fx.t * 2.1);
+  fx.ghostMat.opacity = 0.3 + 0.1 * pulse;
+  fx.ghostMat.emissiveIntensity = 0.65 + 0.35 * pulse;
+  fx.edgeMat.opacity = 0.6 + 0.35 * pulse;
+  fx.rimMat.opacity = 0.55 + 0.35 * pulse;
+  fx.lock.position.y = fx.lockY + Math.sin(fx.t * 1.6) * 0.05;
+  fx.lock.rotation.y = Math.sin(fx.t * 0.7) * 0.6;
+  const pos = fx.sparks.geometry.attributes.position as THREE.BufferAttribute;
+  for (let i = 0; i < fx.seeds.length; i++) {
+    const k = (fx.seeds[i] + fx.t * 0.22) % 1;
+    pos.setY(i, 0.05 + k * (fx.height + 0.3));
+  }
+  pos.needsUpdate = true;
+  (fx.sparks.material as THREE.PointsMaterial).opacity = 0.75;
+}
