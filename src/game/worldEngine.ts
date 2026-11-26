@@ -1,3 +1,5 @@
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { PostFx, getSoftFootprintTexture, getWallBaseShadowTexture } from './postfx';
 import {
   createCounterRun,
   createCreamSubwayTextures,
@@ -485,6 +487,10 @@ export class RestaurantWorldEngine {
   /** What the "Next" pill suggests, and where its soft floor ring sits. */
   private nextAction: (NextAction & { tableId?: number; x: number; z: number; ringX?: number; ringZ?: number }) | null = null;
   private nextRing: THREE.Mesh | null = null;
+  /** Bloom + warm colour grade + vignette (null on low quality and software GL). */
+  private postFx: PostFx | null = null;
+  /** Baked soft shadows under furniture and machines (one merged mesh). */
+  private contactShadowMesh: THREE.Mesh | null = null;
   private lastStationsKey = '';
   /** Called right after every rendered frame (HUD uses it to keep 3D-anchored icons glued on). */
   private frameListener: (() => void) | null = null;
@@ -648,6 +654,20 @@ export class RestaurantWorldEngine {
       this.sunLight.shadow.map = null;
     }
     this.renderer.shadowMap.needsUpdate = true;
+    this.applyPostFx(preset.postFx);
+  }
+
+  /** Turns the glow/grade pass on or off for the current quality. */
+  private applyPostFx(level: 'off' | 'lite' | 'full') {
+    const force = typeof window !== 'undefined' && (window as unknown as { __forcePostFx?: boolean }).__forcePostFx;
+    const want = this.isSoftwareGl && !force ? 'off' : level;
+    if (want === 'off') {
+      this.postFx?.dispose();
+      this.postFx = null;
+      return;
+    }
+    if (!this.postFx) this.postFx = new PostFx(this.renderer, this.scene, this.camera, want);
+    else this.postFx.setLevel(want);
   }
 
   public getGraphicsQuality(): ResolvedQuality {
@@ -1259,7 +1279,7 @@ export class RestaurantWorldEngine {
     );
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.02;
+    this.renderer.toneMappingExposure = 1.06;
     this.renderer.shadowMap.enabled = !this.isSoftwareGl;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -1759,6 +1779,20 @@ export class RestaurantWorldEngine {
     leftBacksplash.receiveShadow = true;
     this.restaurantGroup.add(leftCap, leftBase, leftBacksplash);
 
+    // Soft shadow where the floor meets the back and left walls (reads as ambient occlusion)
+    const wallAoMat = new THREE.MeshBasicMaterial({ map: getWallBaseShadowTexture(), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    const backAo = new THREE.PlaneGeometry(w - 0.6, 0.75);
+    backAo.rotateX(-Math.PI / 2);
+    const backAoMesh = new THREE.Mesh(backAo, wallAoMat);
+    backAoMesh.position.set(centerX + 0.15, 0.117, minZ + 0.28 + 0.375);
+    const leftAo = new THREE.PlaneGeometry(d - 0.6, 0.75);
+    leftAo.rotateX(-Math.PI / 2);
+    leftAo.rotateY(Math.PI / 2);
+    const leftAoMesh = new THREE.Mesh(leftAo, wallAoMat);
+    leftAoMesh.position.set(minX + 0.28 + 0.375, 0.117, 0.15);
+    backAoMesh.renderOrder = leftAoMesh.renderOrder = 1;
+    this.restaurantGroup.add(backAoMesh, leftAoMesh);
+
     // Architectural Caramel-Wood Corner & Section Pilasters along Back & Left Walls
     for (const [px, pz, onBack] of [
       [minX + 0.16, minZ + 0.16, 1],
@@ -1914,7 +1948,7 @@ export class RestaurantWorldEngine {
     diningLight.position.set(centerX + 1.5, 3.8, 0);
     this.restaurantGroup.add(diningLight);
     // Warm kitchen fill so the cooking line glows like the dining room
-    const kitchenLight = new THREE.PointLight('#ffe2b0', 1.6, 12, 1.6);
+    const kitchenLight = new THREE.PointLight('#ffe2b0', 1.15, 12, 1.6);
     kitchenLight.position.set(minX + 2.4, 3.4, 0);
     this.restaurantGroup.add(kitchenLight);
     this.cozyGlows = [];
@@ -2346,10 +2380,57 @@ export class RestaurantWorldEngine {
     }
 
     this.restaurantColliders = [...this.fixedRestaurantColliders, ...itemCols];
+    this.refreshContactShadows(this.restaurantColliders);
     this.navGrid.rebuild(0.3, this.staticColliders, this.restaurantColliders, this.homeColliders);
     this.reachFlood = this.navGrid.floodFrom(this.entrancePoint.x, this.entrancePoint.z);
     this.charmBonus = getCharmBonus(computeCharm(layout));
     if (this.designMode) this.updateDesignMarker();
+  }
+
+  /**
+   * Soft baked shadows on the floor under everything that stands on it (machines, counters,
+   * furniture, plants), from their footprints. Long wall colliders are skipped. One draw call.
+   */
+  private refreshContactShadows(cols: WorldCollider[]) {
+    if (this.contactShadowMesh) {
+      this.contactShadowMesh.removeFromParent();
+      this.contactShadowMesh.geometry.dispose();
+      this.contactShadowMesh = null;
+    }
+    const geos: THREE.BufferGeometry[] = [];
+    const b = this.restaurantBounds;
+    for (const c of cols) {
+      let cx: number, cz: number, w: number, d: number;
+      if (c.kind === 'aabb') {
+        w = c.maxX - c.minX;
+        d = c.maxZ - c.minZ;
+        if (w > 4 || d > 4 || w < 0.05 || d < 0.05) continue;
+        cx = (c.minX + c.maxX) / 2;
+        cz = (c.minZ + c.maxZ) / 2;
+      } else {
+        w = d = c.r * 2;
+        cx = c.x;
+        cz = c.z;
+      }
+      if (cx < b.minX || cx > b.maxX || cz < b.minZ || cz > b.maxZ) continue;
+      const pad = 0.22 + Math.min(w, d) * 0.12;
+      const g = new THREE.PlaneGeometry(w + pad, d + pad);
+      g.rotateX(-Math.PI / 2);
+      g.translate(cx, 0, cz);
+      geos.push(g);
+    }
+    if (!geos.length) return;
+    const merged = mergeGeometries(geos, false);
+    geos.forEach((g) => g.dispose());
+    if (!merged) return;
+    const mesh = new THREE.Mesh(
+      merged,
+      new THREE.MeshBasicMaterial({ map: getSoftFootprintTexture(), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })
+    );
+    mesh.position.y = 0.118;
+    mesh.renderOrder = 1;
+    this.contactShadowMesh = mesh;
+    this.restaurantGroup.add(mesh);
   }
 
   private makeLayoutEntry(p: PlacedDecor, theme: CafeThemeDef) {
@@ -3210,6 +3291,7 @@ export class RestaurantWorldEngine {
       this.camera.fov = this.fovForAspect(w / h);
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(w, h);
+      this.postFx?.setSize(w, h);
       this.renderer.setPixelRatio(this.currentPixelRatio());
     };
 
@@ -3994,7 +4076,7 @@ export class RestaurantWorldEngine {
       (sp.rotY === 0 ? backUpper : leftUpper).add(lamp);
       const fx = Math.sin(sp.rotY) * 0.34;
       const fz = Math.cos(sp.rotY) * 0.34;
-      const halo = createGlowSprite(lampColor, 0.8, 0.5, this.cozyGlows);
+      const halo = createGlowSprite(lampColor, 0.45, 0.32, this.cozyGlows);
       halo.position.set(sp.x + fx, sp.y - 0.04, sp.z + fz);
       const pool = createLightPool(lampColor, 0.75, 0.16, this.cozyGlows);
       pool.rotation.set(0, sp.rotY, 0);
@@ -4208,7 +4290,8 @@ export class RestaurantWorldEngine {
       this.trackFrameRate(rawDt);
 
       this.updateSimulation(dt);
-      this.renderer.render(this.scene, this.camera);
+      if (this.postFx) this.postFx.render(dt);
+      else this.renderer.render(this.scene, this.camera);
       this.frameListener?.();
 
       if (this.isSoftwareGl) {

@@ -225,7 +225,7 @@ let MATS: Mats | null = null;
 function buildMats() {
   const steelMap = brushedSteelTexture();
   return {
-    steel: new THREE.MeshStandardMaterial({ color: '#e4e8ec', map: steelMap, metalness: 0.62, roughness: 0.32 }),
+    steel: new THREE.MeshStandardMaterial({ color: '#e4e8ec', map: steelMap, metalness: 0.55, roughness: 0.46 }),
     steelDark: new THREE.MeshStandardMaterial({ color: '#8d959e', metalness: 0.7, roughness: 0.38 }),
     black: new THREE.MeshStandardMaterial({ color: '#2b2a2d', metalness: 0.45, roughness: 0.5 }),
     oak: new THREE.MeshStandardMaterial({ color: '#ffffff', map: oakTexture('#c88a4c', '#7b4422'), roughness: 0.55 }),
@@ -234,8 +234,8 @@ function buildMats() {
     toe: new THREE.MeshStandardMaterial({ color: '#3a302b', roughness: 0.8 }),
     cream: new THREE.MeshStandardMaterial({ color: '#f3ead8', roughness: 0.55 }),
     creamInside: new THREE.MeshStandardMaterial({ color: '#fff4dc', emissive: '#ffd58a', emissiveIntensity: 0.35, roughness: 0.6, side: THREE.BackSide }),
-    bulb: new THREE.MeshStandardMaterial({ color: '#fff3c4', emissive: '#ffcf6e', emissiveIntensity: 1.6, roughness: 0.3 }),
-    led: new THREE.MeshStandardMaterial({ color: '#fff7e0', emissive: '#ffe2a6', emissiveIntensity: 1.2 }),
+    bulb: new THREE.MeshStandardMaterial({ color: '#fff3c4', emissive: '#ffcf6e', emissiveIntensity: 3.2, roughness: 0.3 }),
+    led: new THREE.MeshStandardMaterial({ color: '#fff7e0', emissive: '#ffe2a6', emissiveIntensity: 1.3 }),
     copper: new THREE.MeshStandardMaterial({ color: '#c8794a', metalness: 0.8, roughness: 0.3 }),
     glass: new THREE.MeshStandardMaterial({ color: '#cfe6e4', metalness: 0.1, roughness: 0.08 }),
     paper: new THREE.MeshStandardMaterial({ color: '#fbf8f0', roughness: 0.9 }),

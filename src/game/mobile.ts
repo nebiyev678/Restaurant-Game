@@ -40,11 +40,11 @@ export function resolveQuality(q: GraphicsQuality | undefined): ResolvedQuality 
 /** Render settings for each quality level. */
 export const QUALITY_PRESETS: Record<
   ResolvedQuality,
-  { pixelRatioCap: number; shadows: boolean; shadowMapSize: number; softShadows: boolean }
+  { pixelRatioCap: number; shadows: boolean; shadowMapSize: number; softShadows: boolean; postFx: 'off' | 'lite' | 'full' }
 > = {
-  low: { pixelRatioCap: 1, shadows: false, shadowMapSize: 512, softShadows: false },
-  medium: { pixelRatioCap: 1.5, shadows: true, shadowMapSize: 1024, softShadows: false },
-  high: { pixelRatioCap: 2, shadows: true, shadowMapSize: 2048, softShadows: true },
+  low: { pixelRatioCap: 1, shadows: false, shadowMapSize: 512, softShadows: false, postFx: 'off' },
+  medium: { pixelRatioCap: 1.5, shadows: true, shadowMapSize: 1024, softShadows: false, postFx: 'lite' },
+  high: { pixelRatioCap: 2, shadows: true, shadowMapSize: 2048, softShadows: true, postFx: 'full' },
 };
 
 // ---------------------------------------------------------------------------
