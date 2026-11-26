@@ -62,6 +62,7 @@ import { DesignMode, DesignSelection } from './components/DesignMode';
 import { createEmptyLayout, DECOR_BY_ID, DecorItemId, FLOORS, FloorId, isSeating, seatingCount, sellValue, WALLS, WallId } from './game/decor';
 import { FloatingJoystick } from './components/FloatingJoystick';
 import { PreviewThumb } from './components/ItemPreview';
+import { LockedEquipmentPopup } from './components/LockedEquipmentPopup';
 import { ManagementDrawers } from './components/ManagementDrawers';
 import { TitleScreen } from './components/TitleScreen';
 import { VirtualJoystick } from './components/VirtualJoystick';
@@ -314,6 +315,7 @@ export default function App() {
   // Interior design mode (rearrange and decorate the dining room)
   const [designMode, setDesignMode] = useState(false);
   const [designSel, setDesignSel] = useState<DesignSelection | null>(null);
+  const [lockedPopup, setLockedPopup] = useState<StationType | null>(null);
   const [cookModal, setCookModal] = useState<{
     station: StationType;
     suggestedOrder: CustomerOrder | null;
@@ -579,6 +581,7 @@ export default function App() {
         commitSave((prev) => ({ ...prev, layout }));
       },
       onDesignSelection: (sel) => setDesignSel(sel),
+      onLockedEquipmentTap: (type) => setLockedPopup(type),
       onCookPerfect: (recipeId, qualityBonus) => {
         haptic(HAPTIC.success);
         pushPopup(`Perfect! ${'★'.repeat(qualityStars(qualityBonus))} ${RECIPES[recipeId].name}`, 'amber');
@@ -1802,17 +1805,16 @@ export default function App() {
                   onClick={() => {
                     haptic(HAPTIC.tap);
                     if (b.locked) {
-                      // Covered machine: show the recipes it will unlock
+                      // Locked machine: price, level, benefits and an unlock button
                       sound.playClick();
-                      setDrawerSubTab(undefined);
-                      setDrawerTab('kitchen');
+                      setLockedPopup(b.stationType!);
                     } else {
                       engineRef.current?.openCookAtStation(b.stationType!);
                     }
                   }}
                   aria-label={
                     b.locked
-                      ? `Locked machine: ${b.label}. Needs level ${b.unlockLevel}, costs $${(b.unlockCost ?? 0).toLocaleString()}. Tap to see recipes.`
+                      ? `Locked machine: ${b.label}. Needs level ${b.unlockLevel}, costs $${(b.unlockCost ?? 0).toLocaleString()}. Tap for details.`
                       : `${b.label}: ${(b.recipeIds ?? []).map((id) => RECIPES[id].name).join(', ')}${
                           pending ? `, ${pending} waiting` : ''
                         }`
@@ -2887,6 +2889,23 @@ export default function App() {
       )}
 
       {/* Pause Modal */}
+      {lockedPopup && (
+        <LockedEquipmentPopup
+          station={lockedPopup}
+          save={save}
+          onClose={() => setLockedPopup(null)}
+          onOpenKitchen={() => {
+            setLockedPopup(null);
+            setDrawerSubTab(undefined);
+            setDrawerTab('kitchen');
+          }}
+          onUnlock={(id) => {
+            handleUnlockRecipe(id);
+            setLockedPopup(null);
+          }}
+        />
+      )}
+
       {screen === 'paused' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4">
           <div className="w-full max-w-sm rounded-2xl bg-slate-950 border border-slate-700 p-6 shadow-2xl text-center space-y-4">
