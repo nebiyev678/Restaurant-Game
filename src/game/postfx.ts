@@ -69,8 +69,10 @@ export class PostFx {
     });
     this.composer = new EffectComposer(renderer, target);
     this.composer.addPass(new RenderPass(scene, camera));
-    // High threshold (HDR, before tone mapping): only bulbs, LED strips and glow sprites bloom, not lit walls
+    // Bloom made bright steel (fridge top, hoods) flare into white blotches, so it stays off;
+    // the pass is kept (disabled) in case a gentler, emissive-only glow is wanted later.
     this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.45, 0.5, 1.8);
+    this.bloom.enabled = false;
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
     this.grade = new ShaderPass(GradeShader);
