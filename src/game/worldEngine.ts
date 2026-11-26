@@ -130,6 +130,7 @@ import {
   NearbyPrompt,
   ProjectedBubble,
   RecipeId,
+  NextAction,
   SaveState,
   StationType,
 } from './types';
@@ -465,6 +466,9 @@ export class RestaurantWorldEngine {
     scan: THREE.Mesh;
   }[] = [];
   private lockedCuisineKey = '';
+  /** What the "Next" pill suggests, and where its soft floor ring sits. */
+  private nextAction: (NextAction & { tableId?: number; x: number; z: number; ringX?: number; ringZ?: number }) | null = null;
+  private nextRing: THREE.Mesh | null = null;
   private lastStationsKey = '';
   /** Called right after every rendered frame (HUD uses it to keep 3D-anchored icons glued on). */
   private frameListener: (() => void) | null = null;
@@ -946,6 +950,118 @@ export class RestaurantWorldEngine {
     this.guideRing!.scale.setScalar(0.9 + k * 0.25);
     (this.guideRing!.material as THREE.MeshBasicMaterial).opacity = 0.45 + k * 0.45;
     this.guidePos = new THREE.Vector3(target.x, target.y, target.z);
+  }
+
+  /** Picks the single most useful next step: serve what you hold, take a finished dish, cook what is needed, clean, or unlock. */
+  private computeNextAction(): typeof this.nextAction {
+    if (this.inVehicle || !this.isInsideRestaurant(this.playerPos.x, this.playerPos.z)) return null;
+    const stationName = (t: StationType) => STATION_INFO[t].short.toLowerCase();
+    const customerOf = (orderId: string) => this.customers.find((c) => c.orderId === orderId);
+    if (this.heldRecipe) {
+      const r = this.heldRecipe;
+      const order = this.orders.find((o) => this.orderNeeds(o, r));
+      const c = order ? customerOf(order.id) : undefined;
+      if (order && c) {
+        return {
+          kind: 'serve',
+          label: `Serve ${RECIPES[r].name}`,
+          detail: order.tableId === -1 ? 'Takeaway' : `Table ${order.tableId}`,
+          recipeId: r,
+          tableId: order.tableId,
+          x: c.mesh.root.position.x,
+          z: c.mesh.root.position.z,
+        };
+      }
+      return { kind: 'pass', label: `Put ${RECIPES[r].name} on the pass`, detail: 'No guest needs it right now', recipeId: r, x: this.playerPos.x, z: this.playerPos.z };
+    }
+    const needed = this.allNeededDishes();
+    for (const st of this.stations) {
+      const ready = this.readyJobAt(st.type);
+      if (ready && needed.includes(ready.recipeId)) {
+        return { kind: 'take', label: `Take ${RECIPES[ready.recipeId].name}`, detail: `Ready at the ${stationName(st.type)}`, recipeId: ready.recipeId, station: st.type, x: st.mx, z: st.mz, ringX: st.x, ringZ: st.z };
+      }
+    }
+    // Dishes still needed that nobody is cooking yet
+    const cooking = [...this.cookJobs.values()].map((j) => j.recipeId);
+    const todo = needed.slice();
+    for (const r of cooking) {
+      const i = todo.indexOf(r);
+      if (i >= 0) todo.splice(i, 1);
+    }
+    for (const r of todo) {
+      const st = this.stations.find((s2) => s2.type === RECIPES[r].station);
+      if (st && !this.isStationBusy(st.type)) {
+        return { kind: 'cook', label: `Cook ${RECIPES[r].name}`, detail: `At the ${stationName(st.type)}`, recipeId: r, station: st.type, x: st.mx, z: st.mz, ringX: st.x, ringZ: st.z };
+      }
+    }
+    const busy = [...this.cookJobs.values()].find((j) => !j.done && needed.includes(j.recipeId));
+    const dirty = this.tables.find((t) => t.dirty);
+    if (dirty) return { kind: 'clean', label: 'Clean the table', detail: `Table ${dirty.id}`, tableId: dirty.id, x: dirty.x, z: dirty.z };
+    if (busy) {
+      const st = this.stations.find((s2) => s2.type === busy.type);
+      if (st) return { kind: 'wait', label: `${RECIPES[busy.recipeId].name} is cooking`, detail: `${Math.ceil(busy.remaining)}s left`, recipeId: busy.recipeId, station: st.type, x: st.mx, z: st.mz, ringX: st.x, ringZ: st.z };
+    }
+    const lp = this.lockedPreviews.find((l) => l.state === 'ready' && l.recipeId);
+    if (lp && lp.recipeId) {
+      return { kind: 'unlock', label: `Unlock ${RECIPES[lp.recipeId].name}`, detail: `$${RECIPES[lp.recipeId].unlockCost.toLocaleString()}`, recipeId: lp.recipeId, station: lp.type, x: lp.x, z: lp.z };
+    }
+    return null;
+  }
+
+  /** Does the suggested next step: walks there and opens the right thing. */
+  public goToNextAction() {
+    const a = this.nextAction;
+    if (!a || this.paused || this.titleMode || this.inVehicle) return;
+    switch (a.kind) {
+      case 'serve':
+        if (a.tableId !== undefined && a.tableId >= 0) this.walkToTable(a.tableId);
+        else this.setTapTarget(new THREE.Vector3(a.x, 0, a.z));
+        break;
+      case 'clean':
+        if (a.tableId !== undefined) this.walkToTable(a.tableId);
+        break;
+      case 'pass':
+        this.putHeldDishOnCounter();
+        break;
+      case 'take':
+      case 'cook':
+      case 'wait':
+        if (a.station) {
+          const st = this.stations.find((s2) => s2.type === a.station);
+          if (st) this.setTapTarget(new THREE.Vector3(st.x, 0, st.z));
+          if (a.kind !== 'wait') this.openCookAtStation(a.station);
+        }
+        break;
+      case 'unlock':
+        if (a.station) this.callbacks.onLockedEquipmentTap?.(a.station);
+        break;
+    }
+  }
+
+  /** Soft pulsing ring under the next step's target once the tutorial is over. */
+  private updateNextRing(dt: number) {
+    this.nextAction = this.computeNextAction();
+    const a = this.nextAction;
+    const show = !!a && !this.guideTarget && a.kind !== 'pass' && a.kind !== 'wait';
+    if (!show) {
+      if (this.nextRing) this.nextRing.visible = false;
+      return;
+    }
+    if (!this.nextRing) {
+      this.nextRing = new THREE.Mesh(
+        new THREE.RingGeometry(0.62, 0.8, 36),
+        new THREE.MeshBasicMaterial({ color: '#fbbf24', transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false })
+      );
+      this.nextRing.rotation.x = -Math.PI / 2;
+      this.nextRing.renderOrder = 2;
+      this.scene.add(this.nextRing);
+    }
+    this.guideTime += dt;
+    const k = 0.5 + 0.5 * Math.sin(this.guideTime * 3.6);
+    this.nextRing.visible = true;
+    this.nextRing.position.set(a!.ringX ?? a!.x, 0.07, a!.ringZ ?? a!.z);
+    this.nextRing.scale.setScalar(0.92 + k * 0.16);
+    (this.nextRing.material as THREE.MeshBasicMaterial).opacity = 0.35 + k * 0.4;
   }
 
   /** Screen position of the tutorial target, clamped to the screen edge when it is off-screen. */
@@ -4084,6 +4200,7 @@ export class RestaurantWorldEngine {
     this.updateCookJobs(dt);
 
     this.updateGuide(dt);
+    this.updateNextRing(dt);
     for (const st of this.steamPuffs) st.update(dt);
     if (this.streakCount > 0) {
       this.streakTimer -= dt;
@@ -5828,6 +5945,9 @@ export class RestaurantWorldEngine {
       bubbles,
       playerPos: { x: this.playerPos.x, z: this.playerPos.z },
       guidePointer: this.projectGuidePointer(),
+      nextAction: this.nextAction
+        ? { kind: this.nextAction.kind, label: this.nextAction.label, detail: this.nextAction.detail, recipeId: this.nextAction.recipeId, station: this.nextAction.station }
+        : null,
       streak: {
         count: this.streakCount,
         mult: getStreakMult(this.streakCount),
