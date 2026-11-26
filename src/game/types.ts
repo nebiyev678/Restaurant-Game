@@ -630,4 +630,17 @@ export interface EngineHudSnapshot {
   streak: { count: number; mult: number; timeLeft: number };
   /** Beginner tutorial target on screen (clamped to the edge with a direction when off-screen). */
   guidePointer: { x: number; y: number; onScreen: boolean; angle: number } | null;
+  /** The most useful thing to do right now (shown as the "Next" pill; null when there is nothing to do). */
+  nextAction?: NextAction | null;
+}
+
+export type NextActionKind = 'serve' | 'pass' | 'take' | 'cook' | 'wait' | 'clean' | 'unlock';
+
+export interface NextAction {
+  kind: NextActionKind;
+  label: string;
+  /** Short detail line, e.g. "Table 3" or "4s left". */
+  detail?: string;
+  recipeId?: RecipeId;
+  station?: StationType;
 }

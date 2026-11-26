@@ -104,3 +104,11 @@ button,
   background: rgba(148, 163, 184, 0.35);
   border-radius: 3px;
 }
+
+/* "Next" pill: a soft amber glow that breathes, so the next step catches the eye without flashing */
+@keyframes nextGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.45), 0 10px 25px rgba(0, 0, 0, 0.35); }
+  50% { box-shadow: 0 0 0 6px rgba(251, 191, 36, 0), 0 10px 25px rgba(0, 0, 0, 0.35); }
+}
+.next-glow { animation: nextGlow 1.8s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .next-glow { animation: none; } }

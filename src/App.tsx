@@ -6,6 +6,8 @@ import {
   Building2,
   ChefHat,
   ChevronDown,
+  ChevronRight,
+  Gift,
   Car,
   ChevronUp,
   Clock,
@@ -148,6 +150,8 @@ import {
   SpecialtyLineId,
   StaffRole,
   StationType,
+  NextAction,
+  NextActionKind,
 } from './game/types';
 import { RestaurantWorldEngine } from './game/worldEngine';
 import { HAPTIC, haptic, isTouchDevice, resolveQuality, setHapticsEnabled } from './game/mobile';
@@ -316,6 +320,8 @@ export default function App() {
   const [designMode, setDesignMode] = useState(false);
   const [designSel, setDesignSel] = useState<DesignSelection | null>(null);
   const [lockedPopup, setLockedPopup] = useState<StationType | null>(null);
+  // Tapping the money pill opens the details panel (level, cleanliness, streak, special)
+  const [showStatus, setShowStatus] = useState(false);
   const [cookModal, setCookModal] = useState<{
     station: StationType;
     suggestedOrder: CustomerOrder | null;
@@ -1776,6 +1782,12 @@ export default function App() {
           {/* Floating machine signs: dish pictures show what each machine makes */}
           {hud.bubbles
             .filter((b) => b.kind === 'station' && b.stationType)
+            // Locked machines only show their sign when they can be bought now (the hologram itself is tappable)
+            .filter(
+              (b) =>
+                !b.locked ||
+                (save.restaurantLevel >= (b.unlockLevel ?? 1) && !b.unlockNeedsLine && save.restaurantCash >= (b.unlockCost ?? 0))
+            )
             .map((b) => {
               const pending = b.pendingCount ?? 0;
               const cooking = !b.locked && b.cookingRecipeId && (b.cookReady || b.cookProgress !== undefined);
@@ -2009,56 +2021,45 @@ export default function App() {
               }}
             >
               <div className="flex items-center justify-between gap-1.5">
-                <div className="pointer-events-auto flex items-center gap-2 min-w-0 overflow-hidden rounded-full bg-slate-950/85 border border-slate-700/70 pl-2.5 pr-1 py-1 shadow-md">
-                  <span className="flex items-center gap-1 font-mono-num text-xs font-bold text-white" aria-label="Restaurant cash">
-                    <Coins className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                    {shortMoney(save.restaurantCash)}
-                  </span>
-                  <span className="flex items-center gap-1 font-mono-num text-xs font-bold text-white" aria-label="Wallet">
-                    <Wallet className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                    {shortMoney(save.personalWallet)}
-                  </span>
-                  <span className="flex items-center gap-0.5 font-mono-num text-[11px] font-bold text-amber-300" aria-label="Reputation">
-                    <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
-                    {save.reputation.toFixed(1)}
-                  </span>
+                <button
+                  onClick={() => {
+                    sound.playClick();
+                    setShowStatus((v) => !v);
+                  }}
+                  aria-expanded={showStatus}
+                  aria-label="Restaurant cash, wallet and reputation. Tap for details"
+                  className={`${HUD_PILL} pointer-events-auto flex items-center gap-2 min-w-0 h-9 pl-2.5 pr-1.5 cursor-pointer`}
+                >
+                  <HudStat icon={<Coins className="w-4 h-4 text-emerald-400" />} value={shortMoney(save.restaurantCash)} label="Restaurant cash" />
+                  <HudStat icon={<Wallet className="w-4 h-4 text-sky-400" />} value={shortMoney(save.personalWallet)} label="Wallet" />
+                  <HudStat icon={<Star className="w-4 h-4 fill-amber-400 text-amber-400" />} value={save.reputation.toFixed(1)} label="Reputation" />
                   {cleanInfo.tone !== 'good' && (
-                  <span
-                    aria-label="Cleanliness"
-                    className={`flex items-center gap-0.5 font-mono-num text-[11px] font-bold ${
-                      cleanInfo.tone === 'ok' ? 'text-amber-300' : 'text-rose-400'
-                    }`}
-                  >
-                    <Sparkles className="w-3 h-3" />
-                    {Math.round(save.cleanliness)}%
-                  </span>
+                    <span aria-label="Cleanliness low" className={`flex items-center ${cleanInfo.tone === 'ok' ? 'text-amber-300' : 'text-rose-400'}`}>
+                      <Sparkles className="w-4 h-4" />
+                    </span>
                   )}
-                  <button
-                    onClick={() => {
-                      sound.playClick();
-                      setShowDailyModal(true);
-                    }}
-                    aria-label={`Daily streak ${dailyStatus.effectiveStreak} days`}
-                    className={`flex items-center gap-0.5 h-6 px-1.5 rounded-full font-mono-num text-[11px] font-bold cursor-pointer ${
-                      dailyStatus.canClaim ? 'bg-amber-500 text-slate-950 animate-pulse' : 'text-orange-300'
-                    }`}
-                  >
-                    <Flame className={`w-3 h-3 ${dailyStatus.canClaim ? 'fill-slate-950' : 'fill-orange-400 text-orange-400'}`} />
-                    {dailyStatus.effectiveStreak}
-                  </button>
-                </div>
+                  <ChevronDown className={`w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform ${showStatus ? 'rotate-180' : ''}`} />
+                </button>
                 <div className="pointer-events-auto flex items-center gap-1.5 shrink-0">
-                  <span
-                    className="flex items-center gap-1 h-8 px-2 rounded-full bg-slate-950/85 border border-slate-700/70 font-mono-num text-[11px] font-bold text-slate-200"
-                    aria-label={`Day ${save.dayNumber}, ${formatClock(saveRef.current.timeOfDay)}`}
-                  >
-                    <span className="text-[9px] text-indigo-300">D{save.dayNumber}</span>
-                    {formatClock(saveRef.current.timeOfDay)}
-                    <span
-                      className="flex items-center gap-0.5 ml-0.5 pl-1.5 border-l border-slate-700 text-amber-300"
-                      aria-label={`Today's goal: ${save.today.customersServed} of ${starTarget} orders for 2 stars`}
+                  {dailyStatus.canClaim && (
+                    <button
+                      onClick={() => {
+                        sound.playClick();
+                        setShowDailyModal(true);
+                      }}
+                      aria-label="Daily bonus ready"
+                      className="w-9 h-9 rounded-full bg-amber-400 text-slate-950 flex items-center justify-center shadow-md animate-pulse cursor-pointer"
                     >
-                      <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
+                      <Gift className="w-4 h-4" />
+                    </button>
+                  )}
+                  <span
+                    className={`${HUD_PILL} flex items-center gap-1.5 h-9 px-2.5 font-mono-num text-[12px] font-bold text-slate-100`}
+                    aria-label={`Day ${save.dayNumber}, ${formatClock(saveRef.current.timeOfDay)}. Served ${save.today.customersServed} of ${starTarget} for 2 stars`}
+                  >
+                    {formatClock(saveRef.current.timeOfDay)}
+                    <span className="flex items-center gap-1 pl-1.5 border-l border-slate-700 text-amber-300">
+                      <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
                       {save.today.customersServed}/{starTarget}
                     </span>
                   </span>
@@ -2067,13 +2068,53 @@ export default function App() {
                       haptic(HAPTIC.tap);
                       setScreen('paused');
                     }}
-                    className="w-9 h-9 rounded-full bg-slate-950/85 border border-slate-700/70 text-slate-200 flex items-center justify-center cursor-pointer"
+                    className={`${HUD_PILL} w-9 h-9 text-slate-200 flex items-center justify-center cursor-pointer`}
                     aria-label="Pause game"
                   >
                     <Pause className="w-4 h-4" />
                   </button>
                 </div>
               </div>
+
+              {showStatus && (
+                <div className={`${HUD_PANEL} pointer-events-auto w-[min(92vw,320px)] p-3 animate-slide-in`} role="region" aria-label="Restaurant details">
+                  <div className="flex items-center justify-between">
+                    <span className="font-display font-extrabold text-white text-[13px]">Level {save.restaurantLevel}</span>
+                    <span className="font-mono-num text-[11px] text-slate-400">
+                      {save.xp.toLocaleString()} / {nextXp.toLocaleString()} XP
+                    </span>
+                  </div>
+                  <div className="mt-1.5 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                    <div className="h-full bg-amber-400" style={{ width: `${Math.min(100, (save.xp / nextXp) * 100)}%` }} />
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <StatusCell icon={<Clock className="w-4 h-4 text-indigo-300" />} label="Day" value={`${save.dayNumber}`} />
+                    <StatusCell
+                      icon={<Sparkles className={`w-4 h-4 ${cleanInfo.tone === 'good' ? 'text-emerald-300' : cleanInfo.tone === 'ok' ? 'text-amber-300' : 'text-rose-400'}`} />}
+                      label="Cleanliness"
+                      value={`${Math.round(save.cleanliness)}%`}
+                    />
+                    <button
+                      onClick={() => {
+                        sound.playClick();
+                        setShowDailyModal(true);
+                      }}
+                      className="text-left cursor-pointer"
+                    >
+                      <StatusCell icon={<Flame className="w-4 h-4 text-orange-400" />} label="Login streak" value={`${dailyStatus.effectiveStreak} day${dailyStatus.effectiveStreak === 1 ? "" : "s"}`} />
+                    </button>
+                    <StatusCell icon={<Users className="w-4 h-4 text-slate-300" />} label="Staff pay / day" value={`$${dailyPayroll.toLocaleString()}`} />
+                  </div>
+                  {save.dailySpecial && (
+                    <div className="mt-2 flex items-center gap-2 rounded-xl bg-amber-500/15 border border-amber-400/40 px-2.5 py-2">
+                      <PreviewThumb kind="recipe" id={save.dailySpecial} alt={RECIPES[save.dailySpecial].name} className="w-7 h-7 rounded-lg" />
+                      <span className="text-[12px] text-amber-100">
+                        <b>Dish of the day:</b> {RECIPES[save.dailySpecial].name} sells for +{Math.round(DAILY_SPECIAL_BONUS * 100)}%
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {hud.activeOrders.length > 0 && (
                 <div className="flex items-center gap-1.5">
@@ -2358,7 +2399,7 @@ export default function App() {
           )}
 
           {/* Right column: serving streak, next quick goal, dish of the day */}
-          {drawerTab === 'none' && !dayReport && (
+          {drawerTab === 'none' && !dayReport && !showStatus && (
             <div
               className={`fixed z-20 pointer-events-none flex flex-col items-end gap-1 ${compact ? 'right-2' : 'right-4'}`}
               style={{ top: compact ? 'calc(max(0.5rem, env(safe-area-inset-top)) + 2.9rem)' : '4.5rem' }}
@@ -2384,7 +2425,7 @@ export default function App() {
               {guideDone && (
                 <QuickGoalChip state={save.quickGoals} special={save.dailySpecial} flash={goalFlash} compact={compact} />
               )}
-              {save.dailySpecial && guideDone && (
+              {save.dailySpecial && guideDone && !compact && (
                 <span
                   className={`flex items-center gap-1 rounded-full bg-amber-500/90 border border-amber-200 text-slate-950 font-bold shadow ${
                     compact ? 'px-1.5 py-0.5 text-[9px]' : 'px-2 py-0.5 text-[10px]'
@@ -2606,6 +2647,18 @@ export default function App() {
             className="fixed left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 max-w-[96vw]"
             style={{ bottom: `calc(${compact ? '0.375rem' : '0.75rem'} + env(safe-area-inset-bottom))` }}
           >
+            {hud.nextAction && !hud.nearbyPrompt && guideDone && drawerTab === 'none' && !cookModal && (
+              <NextActionPill
+                action={hud.nextAction}
+                compact={compact}
+                onGo={() => {
+                  haptic(HAPTIC.tap);
+                  sound.playClick();
+                  if (hud.nextAction?.kind === 'pass') handlePutDishOnPass();
+                  else engineRef.current?.goToNextAction();
+                }}
+              />
+            )}
             <button
               onClick={() => setDockCollapsed((c) => !c)}
               aria-label={dockCollapsed ? 'Show menu' : 'Hide menu'}
@@ -2640,7 +2693,15 @@ export default function App() {
                   { id: 'missions', label: 'Missions', icon: Award },
                   { id: 'album', label: 'Album', icon: BookOpen },
                   { id: 'settings', label: 'Settings', icon: Settings },
-                ].map((item) => {
+                ]
+                  .filter((item, _i, all) => {
+                    // Phones: hide locked tabs; only the next one to unlock shows (as a "Soon" teaser)
+                    if (!compact || isFeatureUnlocked(item.id as FeatureId, save.restaurantLevel)) return true;
+                    const locked = all.filter((x) => !isFeatureUnlocked(x.id as FeatureId, save.restaurantLevel));
+                    const nextLocked = locked.sort((a, b) => FEATURE_UNLOCKS[a.id as FeatureId].level - FEATURE_UNLOCKS[b.id as FeatureId].level)[0];
+                    return nextLocked?.id === item.id;
+                  })
+                  .map((item) => {
                   const Icon = item.icon;
                   const active = drawerTab === item.id;
                   return (
@@ -3036,5 +3097,75 @@ function CookTimerBadge({ bubble: b, compact }: { bubble: ProjectedBubble; compa
         </span>
       )}
     </span>
+  );
+}
+
+/* Shared HUD look: one surface colour, one border, one radius family, so every chip reads as one system. */
+const HUD_PILL = 'rounded-full bg-slate-950/85 border border-slate-700/70 shadow-md backdrop-blur-sm';
+const HUD_PANEL = 'rounded-2xl bg-slate-950/92 border border-slate-700/70 shadow-xl backdrop-blur-sm';
+
+function HudStat({ icon, value, label }: { icon: React.ReactNode; value: string; label: string }) {
+  return (
+    <span className="flex items-center gap-1 shrink-0" aria-label={`${label} ${value}`}>
+      {icon}
+      <span className="font-mono-num text-[13px] font-bold text-white leading-none">{value}</span>
+    </span>
+  );
+}
+
+function StatusCell({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+  return (
+    <span className="flex items-center gap-2 rounded-xl bg-slate-900/80 border border-slate-800 px-2.5 py-2">
+      {icon}
+      <span className="min-w-0">
+        <span className="block text-[10px] font-semibold text-slate-400 leading-tight">{label}</span>
+        <span className="block font-mono-num text-[13px] font-bold text-white leading-tight">{value}</span>
+      </span>
+    </span>
+  );
+}
+
+const NEXT_ICON: Record<NextActionKind, React.ComponentType<{ className?: string }>> = {
+  serve: Utensils,
+  pass: ArrowDownToLine,
+  take: Hand,
+  cook: ChefHat,
+  wait: Clock,
+  clean: Sparkles,
+  unlock: Lock,
+};
+
+/** The one obvious next step, above the menu dock. Tap: walk there and do it. */
+function NextActionPill({ action, onGo, compact }: { action: NextAction; onGo: () => void; compact: boolean }) {
+  const Icon = NEXT_ICON[action.kind];
+  const passive = action.kind === 'wait';
+  return (
+    <button
+      onClick={onGo}
+      disabled={passive}
+      aria-label={`Next: ${action.label}${action.detail ? `, ${action.detail}` : ''}`}
+      className={`pointer-events-auto flex items-center gap-2 rounded-full border-2 shadow-xl max-w-[86vw] ${compact ? 'h-11 pl-1 pr-3' : 'h-12 pl-1.5 pr-4'} ${
+        passive ? 'bg-slate-950/85 border-slate-600 cursor-default' : 'bg-slate-950/92 border-amber-400 cursor-pointer active:scale-95 transition-transform next-glow'
+      }`}
+    >
+      <span className={`relative shrink-0 rounded-full flex items-center justify-center ${compact ? 'w-9 h-9' : 'w-10 h-10'} ${passive ? 'bg-slate-800' : 'bg-amber-400'}`}>
+        {action.recipeId ? (
+          <PreviewThumb kind="recipe" id={action.recipeId} alt="" className="w-full h-full rounded-full" />
+        ) : (
+          <Icon className={`w-5 h-5 ${passive ? 'text-slate-300' : 'text-slate-950'}`} />
+        )}
+        {action.recipeId && (
+          <span className={`absolute -right-1 -bottom-1 w-5 h-5 rounded-full border-2 border-slate-950 flex items-center justify-center ${passive ? 'bg-slate-700' : 'bg-amber-400'}`}>
+            <Icon className={`w-3 h-3 ${passive ? 'text-slate-200' : 'text-slate-950'}`} />
+          </span>
+        )}
+      </span>
+      <span className="min-w-0 text-left">
+        <span className="block text-[9px] font-extrabold text-amber-300 leading-none">{passive ? 'Cooking' : 'Next'}</span>
+        <span className="block font-display font-extrabold text-white text-[13px] leading-tight truncate">{action.label}</span>
+        {action.detail && <span className="block text-[10px] font-semibold text-slate-400 leading-tight truncate">{action.detail}</span>}
+      </span>
+      {!passive && <ChevronRight className="w-4 h-4 text-amber-300 shrink-0" />}
+    </button>
   );
 }
