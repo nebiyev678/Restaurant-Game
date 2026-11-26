@@ -1775,6 +1775,27 @@ export default function App() {
             .filter((b) => b.kind === 'station' && b.stationType)
             .map((b) => {
               const pending = b.pendingCount ?? 0;
+              const cooking = !b.locked && b.cookingRecipeId && (b.cookReady || b.cookProgress !== undefined);
+              if (cooking) {
+                // While a machine is busy its sign shrinks to one small round badge: dish, timer ring, stars
+                return (
+                  <button
+                    key={b.id}
+                    onClick={() => {
+                      haptic(HAPTIC.tap);
+                      engineRef.current?.openCookAtStation(b.stationType!);
+                    }}
+                    aria-label={`${b.label}: ${RECIPES[b.cookingRecipeId!].name} ${
+                      b.cookReady ? 'is ready, step into the circle to take it' : `cooking, ${b.cookSecondsLeft ?? 0} seconds left`
+                    }`}
+                    ref={bindBubble(b.id, b.screenX, b.screenY)}
+                    style={{ left: 0, top: 0, willChange: 'transform' }}
+                    className="pointer-events-auto absolute cursor-pointer"
+                  >
+                    <CookTimerBadge bubble={b} compact={compact} />
+                  </button>
+                );
+              }
               return (
                 <button
                   key={b.id}
@@ -1828,17 +1849,6 @@ export default function App() {
                     <span className="min-w-4 h-4 px-1 rounded-full bg-white text-emerald-700 text-[9px] font-extrabold flex items-center justify-center">
                       {pending}
                     </span>
-                  )}
-                  {b.cookReady && b.cookingRecipeId && (
-                    <span className="absolute left-1/2 top-full mt-1 -translate-x-1/2 flex items-center gap-1 rounded-full bg-amber-400 border border-amber-100 pl-0.5 pr-2 py-0.5 shadow-lg animate-pulse">
-                      <PreviewThumb kind="recipe" id={b.cookingRecipeId} alt={RECIPES[b.cookingRecipeId].name} className="w-4 h-4 rounded-full" />
-                      <span className={`font-extrabold text-slate-950 whitespace-nowrap ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
-                        Take! <QualityStars stars={b.cookStars ?? 1} dark />
-                      </span>
-                    </span>
-                  )}
-                  {!b.cookReady && b.cookProgress !== undefined && b.cookingRecipeId && (
-                    <CookTimerBadge bubble={b} compact={compact} />
                   )}
                 </button>
               );
@@ -2959,33 +2969,32 @@ function QualityStars({ stars, dark = false }: { stars: number; dark?: boolean }
   );
 }
 
-/** Under a cooking machine: timer ring around the dish, the current step, stars, and the optional "TAP!" moment. */
+/** A busy machine's sign: the dish inside a timer ring, seconds left, stars; "Take!" when done; "TAP!" for a perfect moment. */
 function CookTimerBadge({ bubble: b, compact }: { bubble: ProjectedBubble; compact: boolean }) {
-  const pct = Math.round((b.cookProgress ?? 0) * 100);
-  const size = compact ? 'w-6 h-6' : 'w-7 h-7';
+  const pct = b.cookReady ? 100 : Math.round((b.cookProgress ?? 0) * 100);
+  const size = compact ? 'w-7 h-7' : 'w-8 h-8';
+  const perfect = !b.cookReady && b.cookPerfectOpen;
+  const ring = b.cookReady ? '#fbbf24' : perfect ? '#ffffff' : '#fbbf24';
   return (
-    <span
-      className={`absolute left-1/2 top-full mt-1 -translate-x-1/2 flex items-center gap-1.5 rounded-full border pl-0.5 pr-2 py-0.5 shadow-lg ${
-        b.cookPerfectOpen ? 'bg-amber-400 border-white animate-pulse scale-110' : 'bg-slate-950/90 border-amber-400/70'
-      }`}
-    >
+    <span className={`relative flex flex-col items-center ${b.cookReady || perfect ? 'animate-pulse' : ''}`}>
       <span
-        className={`relative ${size} rounded-full p-[2.5px] shrink-0`}
-        style={{ background: `conic-gradient(${b.cookPerfectOpen ? '#fff' : '#fbbf24'} ${pct}%, rgba(51,65,85,0.9) 0)` }}
+        className={`relative ${size} rounded-full p-[2.5px] shadow-lg ${b.cookReady ? 'ring-2 ring-amber-200' : perfect ? 'ring-2 ring-white scale-110' : ''}`}
+        style={{ background: `conic-gradient(${ring} ${pct}%, rgba(15,23,42,0.85) 0)` }}
       >
-        <PreviewThumb kind="recipe" id={b.cookingRecipeId!} alt={RECIPES[b.cookingRecipeId!].name} className="w-full h-full rounded-full" />
+        <PreviewThumb kind="recipe" id={b.cookingRecipeId!} alt={RECIPES[b.cookingRecipeId!].name} className="w-full h-full rounded-full bg-slate-900" />
+        {!b.cookReady && !perfect && (
+          <span className="absolute -right-2 -bottom-1 min-w-[18px] px-1 rounded-full bg-slate-950/90 border border-amber-400/60 text-[8px] leading-[13px] font-mono-num font-bold text-amber-200 text-center">
+            {b.cookSecondsLeft ?? 0}s
+          </span>
+        )}
       </span>
-      {b.cookPerfectOpen ? (
-        <span className={`font-extrabold text-slate-950 whitespace-nowrap ${compact ? 'text-[10px]' : 'text-xs'}`}>TAP! ★ Perfect</span>
+      {b.cookReady ? (
+        <span className="mt-0.5 rounded-full bg-amber-400 px-1.5 text-[9px] leading-[14px] font-extrabold text-slate-950 whitespace-nowrap shadow">Take!</span>
+      ) : perfect ? (
+        <span className="mt-0.5 rounded-full bg-white px-1.5 text-[9px] leading-[14px] font-extrabold text-slate-950 whitespace-nowrap shadow">TAP!</span>
       ) : (
-        <span className="flex flex-col leading-tight">
-          <span className={`font-bold text-white whitespace-nowrap max-w-[7.5rem] truncate ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
-            {b.cookStepCount ? `${(b.cookStepIndex ?? 0) + 1}/${b.cookStepCount} ` : ''}
-            {b.cookStep ?? 'Cooking'}
-          </span>
-          <span className={`flex items-center gap-1 font-mono-num text-amber-300 ${compact ? 'text-[8px]' : 'text-[9px]'}`}>
-            {b.cookSecondsLeft ?? 0}s <QualityStars stars={b.cookStars ?? 1} />
-          </span>
+        <span className="mt-px scale-75 origin-top">
+          <QualityStars stars={b.cookStars ?? 1} />
         </span>
       )}
     </span>
