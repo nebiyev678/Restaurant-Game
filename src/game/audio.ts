@@ -520,6 +520,37 @@ class SoundManager {
     });
   }
 
+  /** Locked machine turning real: a soft rising shimmer, then a bright two-note chime. */
+  public playMaterialize() {
+    const ctx = this.ensureContext();
+    if (!ctx || !this.sfxGain) return;
+    const now = ctx.currentTime;
+    const sweep = ctx.createOscillator();
+    const sg = ctx.createGain();
+    sweep.type = 'triangle';
+    sweep.frequency.setValueAtTime(320, now);
+    sweep.frequency.exponentialRampToValueAtTime(1400, now + 0.75);
+    sg.gain.setValueAtTime(0.0001, now);
+    sg.gain.exponentialRampToValueAtTime(0.05, now + 0.12);
+    sg.gain.exponentialRampToValueAtTime(0.0008, now + 0.8);
+    sweep.connect(sg).connect(this.sfxGain);
+    sweep.start(now);
+    sweep.stop(now + 0.82);
+    [1046.5, 1568].forEach((freq, i) => {
+      if (!this.sfxGain) return;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      const t = now + 0.78 + i * 0.09;
+      osc.frequency.setValueAtTime(freq, t);
+      gain.gain.setValueAtTime(0.11, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+      osc.connect(gain).connect(this.sfxGain);
+      osc.start(t);
+      osc.stop(t + 0.5);
+    });
+  }
+
   public playThemeApply() {
     const ctx = this.ensureContext();
     if (!ctx || !this.sfxGain) return;

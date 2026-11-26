@@ -95,6 +95,10 @@ import {
   createIngredientShelfMesh,
   createLockedMachinePreview,
   updateLockedMachinePreview,
+  setLockedPreviewState,
+  lockedPreviewLocalBox,
+  lockedPreviewSweepParts,
+  LockedPreviewState,
   createKitchenStationMesh,
   createMenuBoardMesh,
   createPassThroughCounterMesh,
@@ -277,6 +281,8 @@ export interface EngineCallbacks {
   onDesignSelection?: (sel: { uid: string; item: DecorItemId; busy: boolean; problem: string | null } | null) => void;
   /** The chef hit the optional "Perfect!" tap while a dish cooked. */
   onCookPerfect?: (recipeId: RecipeId, qualityBonus: number) => void;
+  /** The player tapped a locked machine's hologram. */
+  onLockedEquipmentTap?: (type: StationType) => void;
   /** Fired once when the in-game clock passes midnight during active play. */
   onDayEnded: () => void;
   /** Fired when a hired staff member finishes a task (cooking, serving, cleaning, checkout). */
@@ -431,7 +437,34 @@ export class RestaurantWorldEngine {
   /** Installed (active) machines. x/z = where the cook stands; mx/mz = the machine itself. */
   private stations: { type: StationType; x: number; z: number; mx: number; mz: number; ring: THREE.Mesh }[] = [];
   /** Machines not unlocked yet: see-through previews with what unlocks them (no colliders). */
-  private lockedPreviews: { type: StationType; mesh: THREE.Group; x: number; z: number; recipeId: RecipeId | null }[] = [];
+  private lockedPreviews: {
+    type: StationType;
+    mesh: THREE.Group;
+    x: number;
+    z: number;
+    recipeId: RecipeId | null;
+    /** World-space footprint, for tapping the hologram. */
+    box: THREE.Box3;
+    state: LockedPreviewState | null;
+  }[] = [];
+  private lockedStateTimer = 0;
+  /** Holograms turning into real machines right after an unlock. */
+  private materializing: {
+    type: StationType;
+    ghost: THREE.Group;
+    machine: THREE.Group;
+    t: number;
+    y0: number;
+    y1: number;
+    x: number;
+    z: number;
+    buildPlane: THREE.Plane;
+    ghostPlane: THREE.Plane;
+    swaps: { mesh: THREE.Mesh; orig: THREE.Material | THREE.Material[] }[];
+    clones: THREE.Material[];
+    scan: THREE.Mesh;
+  }[] = [];
+  private lockedCuisineKey = '';
   private lastStationsKey = '';
   /** Called right after every rendered frame (HUD uses it to keep 3D-anchored icons glued on). */
   private frameListener: (() => void) | null = null;
@@ -1087,6 +1120,8 @@ export class RestaurantWorldEngine {
       powerPreference: 'high-performance',
     });
     this.renderer.setSize(width, height);
+    // Per-material clip planes (used only by the short unlock sweep on locked machines)
+    this.renderer.localClippingEnabled = true;
     this.renderer.setPixelRatio(
       this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2)
     );
@@ -1302,7 +1337,18 @@ export class RestaurantWorldEngine {
       this.lastTier = tierInfo.tier;
       this.lastCafeThemeId = activeThemeId;
       this.lastStationsKey = stationsKey;
+      // Remember the holograms so a machine that was just unlocked can turn real in place
+      const cuisineKey = `${save.activeCuisine ?? 'bistro'}|${tierInfo.tier}`;
+      const ghosts = !force && this.lockedCuisineKey === cuisineKey ? new Map(this.lockedPreviews.map((l) => [l.type, l.mesh])) : null;
+      this.finishAllMaterializing();
       this.rebuildRestaurant(tierInfo.tier, tierInfo.tableCount);
+      this.lockedCuisineKey = cuisineKey;
+      if (ghosts) {
+        for (const [type, ghost] of ghosts) {
+          const machine = this.stationMeshes.get(type);
+          if (machine && !this.lockedPreviews.some((l) => l.type === type)) this.startMaterialize(type, ghost, machine);
+        }
+      }
     }
 
     // 1b. Food Street: earlier restaurants reopen on the north avenue
@@ -1824,13 +1870,19 @@ export class RestaurantWorldEngine {
           (a, b) => a.requiredLevel - b.requiredLevel || a.unlockCost - b.unlockCost
         );
         mesh = createLockedMachinePreview(st.type);
-        this.lockedPreviews.push({ type: st.type, mesh, x: st.x, z: st.z, recipeId: upcoming[0]?.id ?? null });
+        this.lockedPreviews.push({ type: st.type, mesh, x: st.x, z: st.z, recipeId: upcoming[0]?.id ?? null, box: new THREE.Box3(), state: null });
         this.stationMeshes.delete(st.type);
         this.masterStations.delete(st.type);
       }
       mesh.position.set(st.x, 0.1, st.z);
       mesh.rotation.y = st.type === 'bar' ? 0 : Math.PI / 2;
       this.restaurantGroup.add(mesh);
+      if (!isActive) {
+        const lp = this.lockedPreviews[this.lockedPreviews.length - 1];
+        mesh.updateMatrixWorld(true);
+        const local = lockedPreviewLocalBox(mesh);
+        if (local) lp.box.copy(local).applyMatrix4(mesh.matrixWorld);
+      }
       // Lived-in kitchen: a steaming soup pot on the oven, a cutting board on the prep counter
       if (isActive && st.type === 'oven') {
         const pot = createSoupPot();
@@ -3134,12 +3186,41 @@ export class RestaurantWorldEngine {
     }
   }
 
+  /** Nearest locked hologram under the current ray (a little forgiving so small fingers hit it). */
+  private pickLockedPreview(): StationType | null {
+    if (this.titleMode || this.inVehicle || this.designMode) return null;
+    let best: StationType | null = null;
+    let bestD = Infinity;
+    const hit = new THREE.Vector3();
+    const padded = new THREE.Box3();
+    for (const lp of this.lockedPreviews) {
+      if (lp.box.isEmpty()) continue;
+      padded.copy(lp.box).expandByScalar(0.12);
+      if (this.raycaster.ray.intersectBox(padded, hit)) {
+        const d = hit.distanceToSquared(this.raycaster.ray.origin);
+        if (d < bestD) {
+          bestD = d;
+          best = lp.type;
+        }
+      }
+    }
+    return best;
+  }
+
   private handleCanvasTap(clientX: number, clientY: number) {
     const rect = this.renderer.domElement.getBoundingClientRect();
     _rayMouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     _rayMouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
 
     this.raycaster.setFromCamera(_rayMouse, this.camera);
+
+    // Locked machine holograms open their unlock card
+    const locked = this.pickLockedPreview();
+    if (locked) {
+      sound.playClick();
+      this.callbacks.onLockedEquipmentTap?.(locked);
+      return;
+    }
 
     // Check clickable shop pads first
     const hits = this.raycaster.intersectObjects(this.clickables, false);
@@ -3734,9 +3815,115 @@ export class RestaurantWorldEngine {
     return st.type === 'bar' ? { x: st.mx, z: st.mz + 0.88 } : { x: st.mx + 0.88, z: st.mz };
   }
 
+  /** Unlock moment: a glowing scan line sweeps up; the real machine builds below it while the hologram dissolves above. */
+  private startMaterialize(type: StationType, ghost: THREE.Group, machine: THREE.Group) {
+    const parts = lockedPreviewSweepParts(ghost);
+    if (!parts) return;
+    machine.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(machine);
+    const size = box.getSize(new THREE.Vector3());
+    const c = box.getCenter(new THREE.Vector3());
+    const buildPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), box.min.y);
+    const ghostPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -box.min.y);
+    const swaps: { mesh: THREE.Mesh; orig: THREE.Material | THREE.Material[] }[] = [];
+    const clones: THREE.Material[] = [];
+    machine.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      const orig = m.material;
+      const clip = (mat: THREE.Material) => {
+        const k = mat.clone();
+        k.clippingPlanes = [buildPlane];
+        clones.push(k);
+        return k;
+      };
+      m.material = Array.isArray(orig) ? orig.map(clip) : clip(orig);
+      swaps.push({ mesh: m, orig });
+    });
+    for (const mat of parts.ghost) mat.clippingPlanes = [ghostPlane];
+    this.restaurantGroup.add(ghost);
+    const scanGeo = new THREE.PlaneGeometry(size.x + 0.12, size.z + 0.12);
+    scanGeo.rotateX(-Math.PI / 2);
+    const scan = new THREE.Mesh(
+      scanGeo,
+      new THREE.MeshBasicMaterial({ color: '#8fe3ff', transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })
+    );
+    scan.position.set(c.x, box.min.y, c.z);
+    scan.renderOrder = 4;
+    this.restaurantGroup.add(scan);
+    sound.playMaterialize();
+    this.materializing.push({ type, ghost, machine, t: 0, y0: box.min.y, y1: box.max.y + 0.02, x: c.x, z: c.z, buildPlane, ghostPlane, swaps, clones, scan });
+  }
+
+  private updateMaterializing(dt: number) {
+    for (const m of this.materializing) {
+      if (!m.machine.parent) {
+        m.t = 99; // the kitchen was rebuilt meanwhile
+        continue;
+      }
+      m.t += dt;
+      const DUR = 1.05;
+      const k = Math.min(1, m.t / DUR);
+      const e = k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
+      const y = m.y0 + (m.y1 - m.y0) * e;
+      m.buildPlane.constant = y;
+      m.ghostPlane.constant = -y;
+      m.scan.position.y = y;
+      (m.scan.material as THREE.MeshBasicMaterial).opacity = 0.55 * (1 - Math.max(0, k - 0.8) / 0.2);
+      const parts = lockedPreviewSweepParts(m.ghost);
+      if (parts) {
+        for (const mat of parts.fade) (mat as THREE.MeshBasicMaterial).opacity *= 1 - Math.min(1, dt * 4);
+        const s = Math.max(0.001, 1 - k * 1.6);
+        parts.lock.scale.setScalar(s);
+        parts.lock.position.y += dt * 0.6;
+      }
+      if (k >= 1 && !m.machine.userData.burstDone) {
+        m.machine.userData.burstDone = true;
+        this.spawnBurst(m.x, m.y1 + 0.1, m.z, '#8fe3ff', 16);
+        this.spawnBurst(m.x, m.y1, m.z, '#facc15', 12);
+      }
+    }
+    if (this.materializing.some((m) => m.t >= 1.05)) {
+      for (const m of this.materializing.filter((x) => x.t >= 1.05)) this.endMaterialize(m);
+      this.materializing = this.materializing.filter((x) => x.t < 1.05);
+    }
+  }
+
+  private endMaterialize(m: (typeof this.materializing)[number]) {
+    for (const sw of m.swaps) sw.mesh.material = sw.orig;
+    for (const c of m.clones) c.dispose();
+    m.ghost.removeFromParent();
+    m.scan.removeFromParent();
+    m.scan.geometry.dispose();
+    (m.scan.material as THREE.Material).dispose();
+  }
+
+  private finishAllMaterializing() {
+    for (const m of this.materializing) this.endMaterialize(m);
+    this.materializing = [];
+  }
+
   /** Upgrade celebrations (bounce + sparkles) and the occasional glint on Master machines. */
   private updateStationLooks(dt: number) {
+    // Locked holograms: ready to buy (gentle glow), saving up, or waiting for a level (still)
+    this.lockedStateTimer -= dt;
+    if (this.lockedStateTimer <= 0) {
+      this.lockedStateTimer = 0.4;
+      const save = this.saveRef.current;
+      for (const lp of this.lockedPreviews) {
+        const def = lp.recipeId ? RECIPES[lp.recipeId] : null;
+        let state: LockedPreviewState = 'level';
+        if (def && save.restaurantLevel >= def.requiredLevel && (!def.recipeLine || save.unlockedSpecialtyLines.includes(def.recipeLine))) {
+          state = save.restaurantCash >= def.unlockCost ? 'ready' : 'cash';
+        }
+        if (state !== lp.state) {
+          lp.state = state;
+          setLockedPreviewState(lp.mesh, state);
+        }
+      }
+    }
     for (const lp of this.lockedPreviews) updateLockedMachinePreview(lp.mesh, dt);
+    this.updateMaterializing(dt);
     for (const c of this.stationCelebrations) {
       const mesh = this.stationMeshes.get(c.type);
       const st = this.stations.find((s) => s.type === c.type);
