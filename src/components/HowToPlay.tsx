@@ -25,12 +25,12 @@ const topics = (isTouch: boolean, side: 'left' | 'right'): Topic[] => [
           `Drag on the ${side} half of the screen to walk (change the side in Settings).`,
           'Tap the floor to walk there, or tap a table to go to it.',
           'Near a machine, guest or table an action button appears: tap it to Cook, Serve or Clean.',
-          'Pinch with two fingers to zoom the camera.',
+          'Pinch with two fingers to zoom. Twist or slide two fingers sideways to turn the camera.',
         ]
       : [
           'Walk with W A S D or the arrow keys, or click the floor.',
           'Press Space (or click the action button) to Cook, Serve or Clean.',
-          'Scroll the mouse wheel to zoom the camera.',
+          'Scroll the mouse wheel to zoom. Drag with the mouse or use the turn buttons to rotate the camera.',
         ],
   },
   {
