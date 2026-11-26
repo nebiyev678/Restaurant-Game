@@ -575,6 +575,10 @@ export interface ProjectedBubble {
   /** Covered machine the player hasn't unlocked yet, and the level that unlocks it. */
   locked?: boolean;
   unlockLevel?: number;
+  /** Price of the recipe that brings this machine into the kitchen. */
+  unlockCost?: number;
+  /** The recipe also needs its specialty line bought first. */
+  unlockNeedsLine?: boolean;
 }
 
 export interface FloatingPopup {

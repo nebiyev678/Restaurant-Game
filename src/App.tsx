@@ -1812,7 +1812,7 @@ export default function App() {
                   }}
                   aria-label={
                     b.locked
-                      ? `Locked machine, unlocks at level ${b.unlockLevel}: ${(b.recipeIds ?? []).map((id) => RECIPES[id].name).join(', ')}`
+                      ? `Locked machine: ${b.label}. Needs level ${b.unlockLevel}, costs $${(b.unlockCost ?? 0).toLocaleString()}. Tap to see recipes.`
                       : `${b.label}: ${(b.recipeIds ?? []).map((id) => RECIPES[id].name).join(', ')}${
                           pending ? `, ${pending} waiting` : ''
                         }`
@@ -1823,7 +1823,7 @@ export default function App() {
                     compact ? 'pl-0.5 pr-1.5 py-0.5' : 'pl-1 pr-2 py-1'
                   } ${
                     b.locked
-                      ? 'bg-stone-800/85 border-stone-500/60 opacity-90'
+                      ? 'bg-slate-950/85 border-sky-400/60'
                       : pending
                         ? 'bg-emerald-600/95 border-emerald-300'
                         : 'bg-slate-950/80 border-slate-600/70'
@@ -1845,6 +1845,25 @@ export default function App() {
                   <span className={`font-bold text-white whitespace-nowrap ${compact ? 'text-[9px]' : 'text-[11px]'}`}>
                     {b.label}
                   </span>
+                  {b.locked && (
+                    <span
+                      className={`rounded-full px-1.5 font-extrabold whitespace-nowrap ${compact ? 'text-[9px] leading-[14px]' : 'text-[10px] leading-4'} ${
+                        save.restaurantLevel < (b.unlockLevel ?? 1)
+                          ? 'bg-slate-700 text-slate-200'
+                          : b.unlockNeedsLine
+                            ? 'bg-fuchsia-500 text-white'
+                            : save.restaurantCash >= (b.unlockCost ?? 0)
+                              ? 'bg-emerald-400 text-emerald-950'
+                              : 'bg-rose-500/90 text-white'
+                      }`}
+                    >
+                      {save.restaurantLevel < (b.unlockLevel ?? 1)
+                        ? `Lv ${b.unlockLevel} · $${(b.unlockCost ?? 0).toLocaleString()}`
+                        : b.unlockNeedsLine
+                          ? 'Needs specialty'
+                          : `Unlock $${(b.unlockCost ?? 0).toLocaleString()}`}
+                    </span>
+                  )}
                   {pending > 0 && b.cookProgress === undefined && (
                     <span className="min-w-4 h-4 px-1 rounded-full bg-white text-emerald-700 text-[9px] font-extrabold flex items-center justify-center">
                       {pending}
