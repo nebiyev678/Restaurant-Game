@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { addWorldDish } from './worldDishes';
 import { addFoodModel } from './foodModels';
 import { applyEquipmentLook } from './equipmentLooks';
+import { createChunkyStation } from './chunkyStations';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
@@ -2624,6 +2625,14 @@ function addCabinetFeet(group: THREE.Group, halfW: number, halfD: number) {
 
 // 3D Kitchen Station Models styled after reference prop sheets (oak, cream, crimson & brushed steel)
 export function createKitchenStationMesh(type: StationType, level = 1): THREE.Group {
+  // Chunky toy-style machines (chunkyStations.ts); the upgrade looks restyle them by material name
+  const chunky = createChunkyStation(type);
+  applyEquipmentLook(chunky, type, level);
+  return chunky;
+}
+
+/** The previous, slimmer machine models (kept for reference). */
+export function createClassicStationMesh(type: StationType, level = 1): THREE.Group {
   const group = new THREE.Group();
   // Named so the upgrade looks (equipmentLooks.ts) can restyle them per upgrade stage
   const steelMat = new THREE.MeshStandardMaterial({ name: 'eq_steel', color: '#dce3eb', metalness: 0.65, roughness: 0.28 });
