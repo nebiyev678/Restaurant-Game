@@ -172,7 +172,8 @@ function grill(): THREE.Group {
   frontDoor(g, m.steel, m.dark, w * 0.42, 0.25, w * 0.23, 0.37, d / 2 - 0.02);
   // Deep grill well with glowing embers and FAT rounded grate bars
   g.add(rb(w - 0.2, 0.08, d - 0.28, 0.03, m.dark, 0, top - 0.02, -0.02, 2));
-  g.add(rb(w - 0.3, 0.02, d - 0.38, 0.01, F.ember, 0, top + 0.01, -0.02, 1));
+  // Ember bed sits 2 cm above the well's top face (they used to share a plane and flickered)
+  g.add(rb(w - 0.3, 0.02, d - 0.38, 0.01, F.ember, 0, top + 0.03, -0.02, 1));
   for (let i = 0; i < 9; i++) {
     const bar = new THREE.Mesh(new THREE.CapsuleGeometry(0.034, d - 0.46, 4, 8), m.dark);
     bar.rotation.x = Math.PI / 2;
