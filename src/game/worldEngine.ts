@@ -1,3 +1,19 @@
+import {
+  createCounterRun,
+  createCreamSubwayTextures,
+  createCuttingBoard,
+  createIndustrialLamp,
+  createIngredientRack,
+  createPassGantry,
+  createTallPantry,
+  createTerracottaFloorTextures,
+  createUtensilRail,
+  createVentHood,
+  createWallCabinet,
+  createWallShelf,
+  kitchenMats,
+  mergeByMaterial,
+} from './kitchenDecor';
 import type { ClothingItem } from './types';
 import { ChefRig, applyChefOutfit, chefCarryPoint, loadChefRig, triggerChefServe, triggerChefSurprise, updateChefRig } from './glbChef';
 import * as THREE from 'three';
@@ -1588,7 +1604,8 @@ export class RestaurantWorldEngine {
     const kitchenEndX = minX + 5.68;
     const kitchenW = kitchenEndX - kitchenStartX;
     const floorSpanD = d - 0.54;
-    const kitchenTextures = createQuarryTileFloorTextures(kitchenW, floorSpanD, maxAniso);
+    // Warm terracotta tiles with cream corner insets
+    const kitchenTextures = createTerracottaFloorTextures(kitchenW, floorSpanD, maxAniso);
     const kitchenFloor = new THREE.Mesh(
       new THREE.BoxGeometry(kitchenW, 0.018, floorSpanD),
       new THREE.MeshStandardMaterial({
@@ -1672,10 +1689,12 @@ export class RestaurantWorldEngine {
       color: '#6b381f',
       roughness: 0.55,
     });
-    const subwayMat = new THREE.MeshStandardMaterial({
-      map: createSubwayTileTexture(5, 3, maxAniso),
-      roughness: 0.32,
-    });
+    // Cream glazed subway tile on the kitchen walls (floor to near the ceiling)
+    const KITCHEN_TILE_H = 2.5;
+    const backTiles = createCreamSubwayTextures(5.2, KITCHEN_TILE_H, maxAniso);
+    const subwayMat = new THREE.MeshStandardMaterial({ map: backTiles.map, bumpMap: backTiles.bumpMap, bumpScale: 1.2, roughness: 0.28 });
+    const leftTiles = createCreamSubwayTextures(d - 0.56, KITCHEN_TILE_H, maxAniso);
+    const leftSubwayMat = new THREE.MeshStandardMaterial({ map: leftTiles.map, bumpMap: leftTiles.bumpMap, bumpScale: 1.2, roughness: 0.28 });
 
     // Each tall wall gets its own materials so it can fade independently
     const backSet = {
@@ -1690,7 +1709,7 @@ export class RestaurantWorldEngine {
       wall: leftWallMat,
       trim: woodTrimMat.clone(),
       base: darkBaseMat.clone(),
-      subway: subwayMat.clone(),
+      subway: leftSubwayMat,
     };
     this.backWallMats = Object.values(backSet);
     this.leftWallMats = Object.values(leftSet);
@@ -1709,8 +1728,8 @@ export class RestaurantWorldEngine {
     const backBase = new THREE.Mesh(new THREE.BoxGeometry(w - 0.1, 0.24, 0.06), backSet.base);
     backBase.position.set(centerX, 0.2, minZ + 0.3);
     // White subway-tile kitchen backsplash cleanly bounded between corner and divider pilasters
-    const backBacksplash = new THREE.Mesh(new THREE.BoxGeometry(5.1, 1.55, 0.04), backSet.subway);
-    backBacksplash.position.set(minX + 2.9, 1.48, minZ + 0.3);
+    const backBacksplash = new THREE.Mesh(new THREE.BoxGeometry(5.2, KITCHEN_TILE_H, 0.04), backSet.subway);
+    backBacksplash.position.set(minX + 2.88, 0.32 + KITCHEN_TILE_H / 2, minZ + 0.3);
     backBacksplash.receiveShadow = true;
     this.restaurantGroup.add(backCap, backBase, backBacksplash);
 
@@ -1732,11 +1751,11 @@ export class RestaurantWorldEngine {
     leftCap.position.set(minX + 0.14, 2.98, 0);
     const leftBase = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.24, d - 0.1), leftSet.base);
     leftBase.position.set(minX + 0.3, 0.2, 0);
-    const leftTileStartZ = minZ + 0.36;
-    const leftTileEndZ = 1.2;
-    const leftTileSpan = Math.max(2, leftTileEndZ - leftTileStartZ);
-    const leftBacksplash = new THREE.Mesh(new THREE.BoxGeometry(0.04, 1.55, leftTileSpan), leftSet.subway);
-    leftBacksplash.position.set(minX + 0.3, 1.48, (leftTileStartZ + leftTileEndZ) / 2);
+    const leftTileStartZ = minZ + 0.28;
+    const leftTileEndZ = maxZ - 0.28;
+    const leftTileSpan = leftTileEndZ - leftTileStartZ;
+    const leftBacksplash = new THREE.Mesh(new THREE.BoxGeometry(0.04, KITCHEN_TILE_H, leftTileSpan), leftSet.subway);
+    leftBacksplash.position.set(minX + 0.3, 0.32 + KITCHEN_TILE_H / 2, (leftTileStartZ + leftTileEndZ) / 2);
     leftBacksplash.receiveShadow = true;
     this.restaurantGroup.add(leftCap, leftBase, leftBacksplash);
 
@@ -1919,39 +1938,8 @@ export class RestaurantWorldEngine {
 
     // (Tables get their own copper pendant lamps in the table loop.)
 
-    // Stainless Range Hood above the main cooking stations (cleanly inside wall & below wall cap)
-    const rangeHood = createRangeHoodMesh();
-    rangeHood.rotation.y = Math.PI / 2;
-    rangeHood.position.set(minX + 0.8, 2.2, -2.05);
-    this.restaurantGroup.add(rangeHood);
 
-    // Hanging Trailing Ivy Shelves & Warm Wall Sconces & Framed Burger Poster
-    const ivyLeft = createHangingIvyShelfMesh(activeTheme.wainscotColor);
-    ivyLeft.rotation.y = Math.PI / 2;
-    ivyLeft.position.set(minX + 0.47, 2.58, 3.2);
-    // (The dining-room wall lamps, ivy shelf and burger poster are movable wall pieces now)
-    const sconceLeft = createWallSconceMesh(activeTheme.lightColor);
-    sconceLeft.rotation.y = Math.PI / 2;
-    sconceLeft.position.set(minX + 0.32, 2.18, 4.4);
-    this.restaurantGroup.add(ivyLeft, sconceLeft);
-    // Warm halo on the kitchen wall lamp
-    const sconceSpots: { x: number; z: number; rotY: number }[] = [{ x: minX + 0.32, z: 4.4, rotY: Math.PI / 2 }];
-    for (const sp of sconceSpots) {
-      const halo = createGlowSprite(activeTheme.lightColor, 1.0, 0.45, this.cozyGlows);
-      const off = 0.17;
-      halo.position.set(sp.x + Math.sin(sp.rotY) * off, 2.1, sp.z + Math.cos(sp.rotY) * off);
-      this.restaurantGroup.add(halo);
-      const wash = createLightPool(activeTheme.lightColor, 0.9, 0.18, this.cozyGlows);
-      wash.rotation.set(0, sp.rotY, 0);
-      wash.position.set(sp.x + Math.sin(sp.rotY) * 0.02, 2.0, sp.z + Math.cos(sp.rotY) * 0.02);
-      this.restaurantGroup.add(wash);
-    }
-
-    // Shelf of vegetable crates on the kitchen wall
-    const crates = createVeggieCrateShelf(activeTheme.wainscotColor);
-    crates.rotation.y = Math.PI / 2;
-    crates.position.set(minX + 0.36, 2.02, 1.5);
-    this.restaurantGroup.add(crates);
+    this.buildKitchenInterior(minX, minZ, maxZ, activeTheme.lightColor);
 
     // Kitchen Stations flush inside left wall + Drink Bar on back wall
     const stationLayout: { type: StationType; x: number; z: number }[] = [
@@ -2111,19 +2099,6 @@ export class RestaurantWorldEngine {
       maxX: fridgeX + 0.62,
       minZ: minZ + 0.34,
       maxZ: fridgeZ + 0.48,
-    });
-
-    const shelfX = centerX - 4.1;
-    const shelfZ = minZ + 0.72;
-    const shelf = createIngredientShelfMesh();
-    shelf.position.set(shelfX, 0.1, shelfZ);
-    this.restaurantGroup.add(shelf);
-    this.restaurantColliders.push({
-      kind: 'aabb',
-      minX: shelfX - 0.75,
-      maxX: shelfX + 0.75,
-      minZ: minZ + 0.34,
-      maxZ: shelfZ + 0.33,
     });
 
     const sinkX = centerX + 0.8;
@@ -3929,6 +3904,138 @@ export class RestaurantWorldEngine {
   private workSpot(st: { type: StationType; mx: number; mz: number }): { x: number; z: number } {
     // Machine fronts: kitchen machines face +x (front ≈ mx + 0.58), the drink bar faces +z (≈ mz + 0.57)
     return st.type === 'bar' ? { x: st.mx, z: st.mz + 0.88 } : { x: st.mx + 0.88, z: st.mz };
+  }
+
+  /**
+   * Kitchen interior: oak-and-steel counters filling the gaps along the cooking line, modern hoods over
+   * the heat stations, open shelves and a utensil rail over prep, storage, industrial lamps, an ingredient
+   * rack and a ticket gantry over the pass. Baked into a few merged meshes; wall-mounted parts fade with their wall.
+   */
+  private buildKitchenInterior(minX: number, minZ: number, maxZ: number, lampColor: string) {
+    const wallX = minX + 0.28; // inner face of the left wall
+    const backZ = minZ + 0.28; // inner face of the back wall
+    const floorY = 0.1;
+    const onLeft = (o: THREE.Object3D, z: number, y = floorY, out = 0) => {
+      o.rotation.y = Math.PI / 2;
+      o.position.set(wallX + out, y, z);
+      return o;
+    };
+    const lower = new THREE.Group();
+    const leftUpper = new THREE.Group();
+    const backUpper = new THREE.Group();
+
+    // Counters in the gaps between machines (cooking line reads as one continuous run)
+    const gaps: { z: number; len: number; top: 'steel' | 'butcher'; board?: boolean }[] = [
+      { z: -3.195, len: 0.44, top: 'steel' },
+      { z: -0.84, len: 0.57, top: 'butcher', board: true },
+      { z: 1.5, len: 0.69, top: 'steel' },
+      { z: 3.705, len: 0.5, top: 'steel' },
+    ];
+    for (const gp of gaps) {
+      lower.add(onLeft(createCounterRun(gp.len, { depth: 1.06, top: gp.top }), gp.z));
+      this.restaurantColliders.push({ kind: 'aabb', minX: wallX, maxX: wallX + 1.1, minZ: gp.z - gp.len / 2, maxZ: gp.z + gp.len / 2 });
+    }
+    const board = createCuttingBoard();
+    board.rotation.y = Math.PI / 2;
+    board.scale.setScalar(0.85);
+    board.position.set(wallX + 0.6, floorY + 0.94, -0.84);
+    lower.add(board);
+    // Tall pantry closing the run at the front corner
+    const pantryZ = 6.27;
+    lower.add(onLeft(createTallPantry(0.8, 0.6), pantryZ));
+    this.restaurantColliders.push({ kind: 'aabb', minX: wallX, maxX: wallX + 0.64, minZ: pantryZ - 0.42, maxZ: Math.min(maxZ - 0.28, pantryZ + 0.42) });
+
+    // Back wall: ingredient rack, butcher-block prep counter with cabinets above, spice shelf over the bin
+    const rack = createIngredientRack(1.0, 0.46);
+    rack.position.set(minX + 2.32, floorY, backZ);
+    lower.add(rack);
+    this.restaurantColliders.push({ kind: 'aabb', minX: minX + 1.8, maxX: minX + 2.84, minZ: backZ, maxZ: backZ + 0.5 });
+    const backCounterX = minX + 4.25;
+    lower.add(Object.assign(createCounterRun(1.18, { depth: 0.62, top: 'butcher' }), {}).translateX(backCounterX).translateY(floorY).translateZ(backZ));
+    this.restaurantColliders.push({ kind: 'aabb', minX: backCounterX - 0.6, maxX: backCounterX + 0.6, minZ: backZ, maxZ: backZ + 0.66 });
+    const bowlBoard = createCuttingBoard();
+    bowlBoard.position.set(backCounterX - 0.2, floorY + 0.94, backZ + 0.34);
+    lower.add(bowlBoard);
+    const backCab = createWallCabinet(1.18, 0.6, 0.34);
+    backCab.position.set(backCounterX, 1.68, backZ);
+    backUpper.add(backCab);
+    const spice = createWallShelf(0.9, 'spices', 3);
+    spice.position.set(minX + 3.2, 1.75, backZ);
+    backUpper.add(spice);
+
+    // Cooking zone: a modern hood over each heat station
+    for (const [z, w] of [
+      [-4.475, 2.15],
+      [0.3, 1.75],
+      [2.65, 1.65],
+    ] as const) {
+      leftUpper.add(onLeft(createVentHood(w, 0.95), z, 2.02));
+    }
+    // Prep zone: open shelves and a utensil rail over the prep counter
+    leftUpper.add(onLeft(createWallShelf(1.6, 'mixed', 1), -2.05, 2.36));
+    leftUpper.add(onLeft(createWallShelf(1.4, 'produce', 2), -2.05, 1.86));
+    // Specialty corner: upper cabinets
+    leftUpper.add(onLeft(createWallCabinet(1.7, 0.62, 0.36), 4.9, 1.98));
+    // Rail with ladles and copper pans over the counter between fryer and oven
+    leftUpper.add(onLeft(createUtensilRail(0.66), 1.5, 1.72));
+
+    // Warm industrial lamps between the hoods, and on the back wall
+    const lampSpots: { x: number; y: number; z: number; rotY: number }[] = [
+      { x: wallX, y: 2.2, z: -3.195, rotY: Math.PI / 2 },
+      { x: wallX, y: 2.2, z: -0.84, rotY: Math.PI / 2 },
+      { x: wallX, y: 2.25, z: 3.705, rotY: Math.PI / 2 },
+      { x: minX + 2.32, y: 2.3, z: backZ, rotY: 0 },
+      { x: minX + 3.2, y: 2.3, z: backZ, rotY: 0 },
+    ];
+    for (const sp of lampSpots) {
+      const lamp = createIndustrialLamp();
+      lamp.rotation.y = sp.rotY;
+      lamp.position.set(sp.x, sp.y, sp.z);
+      (sp.rotY === 0 ? backUpper : leftUpper).add(lamp);
+      const fx = Math.sin(sp.rotY) * 0.34;
+      const fz = Math.cos(sp.rotY) * 0.34;
+      const halo = createGlowSprite(lampColor, 0.8, 0.5, this.cozyGlows);
+      halo.position.set(sp.x + fx, sp.y - 0.04, sp.z + fz);
+      const pool = createLightPool(lampColor, 0.75, 0.16, this.cozyGlows);
+      pool.rotation.set(0, sp.rotY, 0);
+      pool.position.set(sp.x + Math.sin(sp.rotY) * 0.02, sp.y - 0.25, sp.z + Math.cos(sp.rotY) * 0.02);
+      this.restaurantGroup.add(halo, pool);
+    }
+
+    // Serving zone: plate shelf and ticket rail over the pass
+    const passTop = 1.12;
+    const gantry = createPassGantry(2.3);
+    gantry.rotation.y = Math.PI / 2;
+    gantry.position.set(this.passPos.x, passTop, this.passPos.z);
+    lower.add(gantry);
+
+    // Floor zoning: a cream line in front of the cooking line, a steel-edged serving area by the pass
+    const M = kitchenMats();
+    const band = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.006, 11.5), M.cream);
+    band.position.set(minX + 1.72, 0.113, 0.15);
+    lower.add(band);
+    const sx0 = this.passPos.x - 0.85;
+    const sx1 = minX + 5.62;
+    const sz0 = this.passPos.z - 1.65;
+    const sz1 = this.passPos.z + 1.65;
+    for (const [w, d, x, z] of [
+      [sx1 - sx0, 0.05, (sx0 + sx1) / 2, sz0],
+      [sx1 - sx0, 0.05, (sx0 + sx1) / 2, sz1],
+      [0.05, sz1 - sz0, sx0, (sz0 + sz1) / 2],
+    ]) {
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(w, 0.006, d), M.steel);
+      strip.position.set(x, 0.113, z);
+      lower.add(strip);
+    }
+
+    const bakedLower = mergeByMaterial(lower);
+    this.restaurantGroup.add(bakedLower.group);
+    const bakedLeft = mergeByMaterial(leftUpper, { cloneMaterials: true });
+    this.restaurantGroup.add(bakedLeft.group);
+    this.leftWallMats.push(...bakedLeft.materials);
+    const bakedBack = mergeByMaterial(backUpper, { cloneMaterials: true });
+    this.restaurantGroup.add(bakedBack.group);
+    this.backWallMats.push(...bakedBack.materials);
   }
 
   /** Unlock moment: a glowing scan line sweeps up; the real machine builds below it while the hologram dissolves above. */
