@@ -909,6 +909,14 @@ export default function App() {
   const [lockedSheet, setLockedSheet] = useState<FeatureId | null>(null);
   const guideStep = save.guideStep ?? TUTORIAL_DONE;
   const guideDone = guideStep >= GUIDE_STEPS.length;
+  // The held-dish chip already has a put-on-the-pass button, so a 'pass' suggestion would only repeat it
+  const showNextPill = Boolean(hud.nextAction && hud.nextAction.kind !== 'pass' && !hud.nearbyPrompt && guideDone && drawerTab === 'none' && !cookModal);
+  const goNext = () => {
+    haptic(HAPTIC.tap);
+    sound.playClick();
+    if (hud.nextAction?.kind === 'pass') handlePutDishOnPass();
+    else engineRef.current?.goToNextAction();
+  };
   const tutorialOn = !guideDone && screen === 'playing';
   const guideDef = GUIDE_STEPS[guideStep];
 
@@ -2509,7 +2517,7 @@ export default function App() {
           </div>
 
           {/* Bottom-Right Context Action Button (Mobile & Desktop) */}
-          {compact && (hud.nearbyPrompt || hud.heldRecipe) && (
+          {compact && (hud.nearbyPrompt || hud.heldRecipe || showNextPill) && (
             <div
               className={`fixed flex flex-col gap-1.5 ${save.joystickSide === 'right' ? 'left-2 items-start' : 'right-2 items-end'}`}
               style={{
@@ -2582,6 +2590,11 @@ export default function App() {
                   </span>
                 </button>
               )}
+              {/* Phones: the Next step lives in the same "do" column as the action button (they never show
+                  together), on the side opposite the joystick, so it can't overlap the held-dish chip or the stick */}
+              {showNextPill && hud.nextAction && (
+                <NextActionPill action={hud.nextAction} compact onGo={goNext} />
+              )}
             </div>
           )}
 
@@ -2651,18 +2664,7 @@ export default function App() {
             className="fixed left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 max-w-[96vw]"
             style={{ bottom: `calc(${compact ? '0.375rem' : '0.75rem'} + env(safe-area-inset-bottom))` }}
           >
-            {hud.nextAction && !hud.nearbyPrompt && guideDone && drawerTab === 'none' && !cookModal && (
-              <NextActionPill
-                action={hud.nextAction}
-                compact={compact}
-                onGo={() => {
-                  haptic(HAPTIC.tap);
-                  sound.playClick();
-                  if (hud.nextAction?.kind === 'pass') handlePutDishOnPass();
-                  else engineRef.current?.goToNextAction();
-                }}
-              />
-            )}
+            {!compact && showNextPill && hud.nextAction && <NextActionPill action={hud.nextAction} compact={false} onGo={goNext} />}
             <button
               onClick={() => setDockCollapsed((c) => !c)}
               aria-label={dockCollapsed ? 'Show menu' : 'Hide menu'}
@@ -3148,7 +3150,7 @@ function NextActionPill({ action, onGo, compact }: { action: NextAction; onGo: (
       onClick={onGo}
       disabled={passive}
       aria-label={`Next: ${action.label}${action.detail ? `, ${action.detail}` : ''}`}
-      className={`pointer-events-auto flex items-center gap-2 rounded-full border-2 shadow-xl max-w-[86vw] ${compact ? 'h-11 pl-1 pr-3' : 'h-12 pl-1.5 pr-4'} ${
+      className={`pointer-events-auto flex items-center gap-2 rounded-full border-2 shadow-xl ${compact ? 'max-w-[62vw] h-11 pl-1 pr-3' : 'max-w-[86vw] h-12 pl-1.5 pr-4'} ${
         passive ? 'bg-slate-950/85 border-slate-600 cursor-default' : 'bg-slate-950/92 border-amber-400 cursor-pointer active:scale-95 transition-transform next-glow'
       }`}
     >
