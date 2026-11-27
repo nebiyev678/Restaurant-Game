@@ -165,6 +165,57 @@ function createSettsTexture(aniso: number) {
   return finishTexture(c, aniso);
 }
 
+/** Warm-grey asphalt with fine aggregate, a few darker repair patches and hairline cracks (one tile ≈ 4 m). */
+function createAsphaltTexture(aniso: number) {
+  const { c, ctx } = makeCanvas(512, 512);
+  const rnd = seeded(23);
+  ctx.fillStyle = '#55555a';
+  ctx.fillRect(0, 0, 512, 512);
+  // Large soft tonal variation
+  for (let i = 0; i < 26; i++) {
+    const x = rnd() * 512;
+    const y = rnd() * 512;
+    const r = 40 + rnd() * 110;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    const dark = rnd() < 0.5;
+    g.addColorStop(0, dark ? 'rgba(40,40,44,0.18)' : 'rgba(120,118,112,0.12)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  // Aggregate speckle
+  for (let i = 0; i < 9000; i++) {
+    const v = rnd();
+    ctx.fillStyle = v < 0.5 ? `rgba(30,30,34,${0.25 + rnd() * 0.3})` : `rgba(160,156,148,${0.18 + rnd() * 0.25})`;
+    const sz = rnd() < 0.85 ? 1 : 2;
+    ctx.fillRect(rnd() * 512, rnd() * 512, sz, sz);
+  }
+  // Repair patches
+  for (let i = 0; i < 3; i++) {
+    ctx.fillStyle = 'rgba(38,38,42,0.35)';
+    const w = 50 + rnd() * 80;
+    const h = 30 + rnd() * 50;
+    roundRect(ctx, rnd() * (512 - w), rnd() * (512 - h), w, h, 6);
+    ctx.fill();
+  }
+  // Hairline cracks
+  ctx.strokeStyle = 'rgba(25,25,28,0.45)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 6; i++) {
+    let x = rnd() * 512;
+    let y = rnd() * 512;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    for (let k = 0; k < 6; k++) {
+      x += (rnd() - 0.5) * 40;
+      y += (rnd() - 0.5) * 40;
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  return finishTexture(c, aniso);
+}
+
 /** Classic fan / scallop cobble pattern ("Bogenpflaster") for the piazza (one tile ≈ 2.4 m). */
 function createFanCobbleTexture(aniso: number) {
   const S = 512;
@@ -536,10 +587,11 @@ export class OldTownExterior {
       )
     );
 
-    // Granite-sett roads
+    // Asphalt roads (the parking lot keeps granite setts)
     const setts = createSettsTexture(aniso);
+    const asphalt = createAsphaltTexture(aniso);
     const roadMat = (w: number, d: number) =>
-      new THREE.MeshStandardMaterial({ map: textured(setts, w / 2, d / 2), roughness: 0.86 });
+      new THREE.MeshStandardMaterial({ map: textured(asphalt, w / 4, d / 4), roughness: 0.92 });
     const ewLen = eastRoad.maxX - eastRoad.minX;
     g.add(flatPlane(ewLen, eastRoad.halfW * 2, roadMat(ewLen, eastRoad.halfW * 2), (eastRoad.minX + eastRoad.maxX) / 2, 0.02, 0));
     const nsLen = nsRoad.outer - nsRoad.inner;
@@ -550,26 +602,26 @@ export class OldTownExterior {
     }
 
     // Roundabout ring (sits on top of the road ends)
-    const ringTex = textured(setts, rb.roadR, rb.roadR);
+    const ringTex = textured(asphalt, rb.roadR / 2, rb.roadR / 2);
     const ring = new THREE.Mesh(
       new THREE.CircleGeometry(rb.roadR, 48),
-      new THREE.MeshStandardMaterial({ map: ringTex, roughness: 0.86 })
+      new THREE.MeshStandardMaterial({ map: ringTex, roughness: 0.92 })
     );
     ring.rotation.x = -Math.PI / 2;
     ring.position.set(rb.x, 0.024, rb.z);
     ring.receiveShadow = true;
     g.add(ring);
 
-    // Brick herringbone courtyard in front of home
-    const cw = courtyard.maxX - courtyard.minX;
-    const cd = courtyard.maxZ - courtyard.minZ;
+    // The avenue ends at the player's home: a dropped-kerb apron leads onto the home's front walk
+    // (the old brick courtyard is replaced by the home's front yard, built with the house)
+    void courtyard;
     g.add(
       flatPlane(
-        cw,
-        cd,
-        new THREE.MeshStandardMaterial({ map: textured(createHerringboneTexture(aniso), cw / 1.6, cd / 1.6), roughness: 0.85 }),
-        (courtyard.minX + courtyard.maxX) / 2,
-        0.018,
+        0.5,
+        3.2,
+        new THREE.MeshStandardMaterial({ color: '#bdb6aa', roughness: 0.85 }),
+        eastRoad.maxX + 0.25,
+        0.021,
         0
       )
     );
@@ -628,6 +680,25 @@ export class OldTownExterior {
       if (x > 14.2 && x < 20.8) continue; // junction with the N/S avenue
       stripes.push(compose(x, 0.033, (PARKING.street.westLaneZ + PARKING.street.eastLaneZ) / 2, 0, 1.4, 1, 0.1).clone());
     }
+    // Lane markings: dashed centre lines and solid edge lines on the avenues
+    const ringMeetX = rb.x + Math.sqrt(rb.roadR ** 2 - eastRoad.halfW ** 2);
+    for (let x = ringMeetX + 3.6; x < eastRoad.maxX - 1.2; x += 2.6) stripes.push(compose(x, 0.033, 0, 0, 1.3, 1, 0.12).clone());
+    for (const zs of [-1, 1]) {
+      const z = zs * (eastRoad.halfW - 0.28);
+      const x0 = ringMeetX + 3.0;
+      const x1 = eastRoad.maxX - 0.3;
+      stripes.push(compose((x0 + x1) / 2, 0.033, z, 0, x1 - x0, 1, 0.09).clone());
+    }
+    for (const side of [-1, 1]) {
+      for (let z = 8.2; z < nsRoad.outer - 0.5; z += 2.6) stripes.push(compose(nsRoad.x, 0.033, side * z, 0, 0.12, 1, 1.3).clone());
+      for (const xs of [-1, 1]) {
+        const z0 = 7.4;
+        const z1 = nsRoad.outer;
+        stripes.push(compose(nsRoad.x + xs * (nsRoad.halfW - 0.28), 0.033, side * ((z0 + z1) / 2), 0, 0.09, 1, z1 - z0).clone());
+      }
+    }
+    // Give-way line where the avenues enter the roundabout
+    stripes.push(compose(ringMeetX + 0.35, 0.034, -eastRoad.halfW / 2, 0, 0.14, 1, eastRoad.halfW - 0.2).clone());
     const marks = new THREE.InstancedMesh(stripeGeo, paint, stripes.length);
     stripes.forEach((m, i) => marks.setMatrixAt(i, m));
     marks.receiveShadow = true;
@@ -673,6 +744,8 @@ export class OldTownExterior {
     // East avenue kerbs (from where they meet the ring to the courtyard)
     const ringMeetX = rb.x + Math.sqrt(rb.roadR ** 2 - eastRoad.halfW ** 2);
     for (const s of [-1, 1]) addLine(ringMeetX, s * (eastRoad.halfW + 0.11), eastRoad.maxX, s * (eastRoad.halfW + 0.11));
+    // Road end: kerb across the avenue, open in the middle where the dropped apron meets the home walk
+    for (const s of [-1, 1]) addLine(eastRoad.maxX + 0.11, s * 1.6, eastRoad.maxX + 0.11, s * (eastRoad.halfW + 0.11));
     // N/S avenue kerbs
     const ringMeetZ = Math.sqrt(rb.roadR ** 2 - nsRoad.halfW ** 2);
     for (const s of [-1, 1]) {
@@ -1100,13 +1173,12 @@ export class OldTownExterior {
     g.add(flatPlane(36.2, 45, sandMat(36.2, 45), 15.4, 0.008, -43.5));
 
     // Granite-sett avenue continuing north from the roundabout road
-    const setts = createSettsTexture(aniso);
     const len = F.road.maxZ - F.road.minZ;
     g.add(
       flatPlane(
         F.road.halfW * 2,
         len,
-        new THREE.MeshStandardMaterial({ map: textured(setts, F.road.halfW, len / 2), roughness: 0.86 }),
+        new THREE.MeshStandardMaterial({ map: textured(createAsphaltTexture(aniso), F.road.halfW / 2, len / 4), roughness: 0.92 }),
         F.road.x,
         0.02,
         (F.road.minZ + F.road.maxZ) / 2
