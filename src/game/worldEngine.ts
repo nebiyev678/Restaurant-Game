@@ -1,3 +1,4 @@
+import { starterApartmentColliders } from './apartmentDecor';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { PostFx, getSoftFootprintTexture, getWallBaseShadowTexture } from './postfx';
 import {
@@ -3006,10 +3007,20 @@ export class RestaurantWorldEngine {
       );
     }
 
+    // The starter loft brings its own furniture (bed, kitchenette, desk, shelf, reading corner)
+    if (house.tier === 1) {
+      for (const c of starterApartmentColliders(w, d)) {
+        this.homeColliders.push(
+          c.kind === 'aabb'
+            ? { kind: 'aabb', minX: hx + c.minX, maxX: hx + c.maxX, minZ: hz + c.minZ, maxZ: hz + c.maxZ }
+            : { kind: 'circle', x: hx + c.x, z: hz + c.z, r: c.r }
+        );
+      }
+    }
     // Starter Bed
     const bedX = hx - w / 2 + 1.4;
     const bedZ = hz - d / 2 + 1.4;
-    this.homeColliders.push({
+    if (house.tier !== 1) this.homeColliders.push({
       kind: 'aabb',
       minX: bedX - 0.85,
       maxX: bedX + 0.85,
