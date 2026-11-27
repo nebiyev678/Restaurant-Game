@@ -1,3 +1,4 @@
+import { buildHomeYard } from './homeYard';
 import { starterApartmentColliders } from './apartmentDecor';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { PostFx, getSoftFootprintTexture, getWallBaseShadowTexture } from './postfx';
@@ -350,6 +351,7 @@ export class RestaurantWorldEngine {
   private restaurantGroup = new THREE.Group();
   private tablesGroup = new THREE.Group();
   private homeGroup = new THREE.Group();
+  private homeYardColliders: WorldCollider[] = [];
   private showroomGroup = new THREE.Group();
 
   // Player & Vehicle
@@ -1541,6 +1543,10 @@ export class RestaurantWorldEngine {
       const houseMesh = createHouseStructure(houseDef, save.ownedFurniture);
       houseMesh.position.set(40, 0, -5);
       this.homeGroup.add(houseMesh);
+      // Front yard, walk and entrance fitted to this house's footprint
+      const yard = buildHomeYard(8.4 * houseDef.sizeScale, 7.4 * houseDef.sizeScale);
+      this.homeGroup.add(yard.group);
+      this.homeYardColliders = yard.colliders;
       this.rebuildHomeColliders(houseDef, save.ownedFurniture);
     }
 
@@ -3007,6 +3013,7 @@ export class RestaurantWorldEngine {
       );
     }
 
+    this.homeColliders.push(...this.homeYardColliders);
     // The starter loft brings its own furniture (bed, kitchenette, desk, shelf, reading corner)
     if (house.tier === 1) {
       for (const c of starterApartmentColliders(w, d)) {
