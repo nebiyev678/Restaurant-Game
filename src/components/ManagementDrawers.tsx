@@ -62,6 +62,7 @@ import {
 } from '../game/data';
 import {
   CafeThemeId,
+  CuisineId,
   DrawerTab,
   EquipmentId,
   ExpansionId,
@@ -103,6 +104,9 @@ interface ManagementDrawersProps {
   onClaimChallengeBonus: () => void;
   onToggleHaptics: () => void;
   onResetSave: () => void;
+  onTesterJumpToCuisine: (id: CuisineId) => void;
+  onTesterAddMoney: () => void;
+  onTesterLevelUp: () => void;
   onAdvanceTimeOfDay: () => void;
   onOpenGrandOpening: () => void;
   onOpenHowToPlay: () => void;
@@ -143,6 +147,9 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
   onClaimChallengeBonus,
   onToggleHaptics,
   onResetSave,
+  onTesterJumpToCuisine,
+  onTesterAddMoney,
+  onTesterLevelUp,
   onAdvanceTimeOfDay,
   onOpenGrandOpening,
   onOpenHowToPlay,
@@ -1690,9 +1697,12 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
                 </div>
                 <PWAInstallButton variant="settings" />
               </div>
-              <p className="text-[10px] text-slate-500 text-center pt-1">
-                3D food models: Food Kit by Kenney (kenney.nl), CC0. Thank you!
-              </p>
+              <TesterTools
+                save={save}
+                onJump={onTesterJumpToCuisine}
+                onAddMoney={onTesterAddMoney}
+                onLevelUp={onTesterLevelUp}
+              />
             </div>
           )}
         </div>
@@ -1701,6 +1711,111 @@ export const ManagementDrawers: React.FC<ManagementDrawersProps> = ({
   );
 };
 
+
+const TESTER_KEY = 'rg_tester_tools';
+
+/** Hidden tester panel: tap the credits line 7 times to show it (remembered on this device). */
+const TesterTools: React.FC<{
+  save: SaveState;
+  onJump: (id: CuisineId) => void;
+  onAddMoney: () => void;
+  onLevelUp: () => void;
+}> = ({ save, onJump, onAddMoney, onLevelUp }) => {
+  const [enabled, setEnabled] = useState(() => {
+    try {
+      return localStorage.getItem(TESTER_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [taps, setTaps] = useState(0);
+  const setOn = (on: boolean) => {
+    setEnabled(on);
+    setTaps(0);
+    try {
+      if (on) localStorage.setItem(TESTER_KEY, '1');
+      else localStorage.removeItem(TESTER_KEY);
+    } catch {
+      /* storage unavailable: keep it for this session only */
+    }
+  };
+  const tapCredits = () => {
+    if (enabled) return;
+    setTaps((t) => t + 1);
+  };
+  useEffect(() => {
+    if (!enabled && taps >= 7) setOn(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taps, enabled]);
+  const active = save.activeCuisine ?? 'bistro';
+  return (
+    <>
+      {enabled && (
+        <div className="rounded-xl border border-fuchsia-500/50 bg-fuchsia-950/30 p-4 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="font-semibold text-sm text-white">🧪 Tester tools</p>
+              <p className="text-xs text-slate-300">Changes your real save. Use a test device or reset after.</p>
+            </div>
+            <button
+              onClick={() => setOn(false)}
+              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold cursor-pointer"
+            >
+              Hide
+            </button>
+          </div>
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-fuchsia-300 mb-1.5">Jump to restaurant</p>
+            <div className="grid grid-cols-1 gap-1.5">
+              {CUISINE_ORDER.map((id) => {
+                const c = CUISINES[id];
+                const here = id === active;
+                return (
+                  <button
+                    key={id}
+                    disabled={here}
+                    onClick={() => onJump(id)}
+                    className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-left text-xs font-bold cursor-pointer disabled:cursor-default ${
+                      here ? 'bg-fuchsia-500/25 text-fuchsia-100 ring-1 ring-fuchsia-400/60' : 'bg-slate-800 hover:bg-slate-700 text-white'
+                    }`}
+                  >
+                    <span className="truncate">
+                      <span className="mr-1.5">{c.flag}</span>
+                      {c.name}
+                    </span>
+                    <span className="shrink-0 text-[10px] text-slate-400">{here ? 'You are here' : `Lv ${c.requiredLevel}+`}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1.5">
+              Unlocks every dish on that menu, raises your level to at least the restaurant's level, and sets the earlier
+              restaurants as your Food Street places.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={onAddMoney}
+              className="px-3 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold cursor-pointer"
+            >
+              +$10,000
+            </button>
+            <button
+              onClick={onLevelUp}
+              className="px-3 py-2 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-extrabold cursor-pointer"
+            >
+              +1 Level
+            </button>
+          </div>
+        </div>
+      )}
+      <p onClick={tapCredits} className="text-[10px] text-slate-500 text-center pt-1 select-none">
+        3D food models: Food Kit by Kenney (kenney.nl), CC0. Thank you!
+        {!enabled && taps >= 3 && <span className="block text-fuchsia-400/80">{7 - taps} more taps…</span>}
+      </p>
+    </>
+  );
+};
 
 /** The restaurant chain: where you are, what's next, and the old places still earning in town. */
 const RestaurantChainCard: React.FC<{ save: SaveState; onOpenGrandOpening: () => void }> = ({ save, onOpenGrandOpening }) => {
