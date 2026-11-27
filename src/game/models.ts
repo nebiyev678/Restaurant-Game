@@ -3,6 +3,7 @@ import { addWorldDish } from './worldDishes';
 import { addFoodModel } from './foodModels';
 import { applyEquipmentLook } from './equipmentLooks';
 import { createChunkyStation } from './chunkyStations';
+import { createStarterApartment } from './apartmentDecor';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
@@ -3788,8 +3789,10 @@ export function createHouseStructure(house: HouseDef, ownedFurniture: string[]):
     map: createWoodTexture(house.floorColor, '#451a03', 4),
     roughness: 0.5,
   });
-  const wallMat = new THREE.MeshStandardMaterial({ color: house.wallColor, roughness: 0.7 });
-  const trimMat = new THREE.MeshStandardMaterial({ color: house.roofColor, roughness: 0.42 });
+  const starter = house.tier === 1;
+  // The starter home is the "Sunset Loft": warm cream walls with a terracotta roof trim
+  const wallMat = new THREE.MeshStandardMaterial({ color: starter ? '#f6e7d3' : house.wallColor, roughness: 0.7 });
+  const trimMat = new THREE.MeshStandardMaterial({ color: starter ? '#c96a45' : house.roofColor, roughness: 0.42 });
 
   const floor = new THREE.Mesh(new THREE.BoxGeometry(w, 0.16, d), floorMat);
   floor.position.y = 0.08;
@@ -3808,8 +3811,10 @@ export function createHouseStructure(house: HouseDef, ownedFurniture: string[]):
   leftWall.receiveShadow = true;
   group.add(leftWall);
 
-  const rightWall = new THREE.Mesh(new THREE.BoxGeometry(0.26, wallH, d), wallMat);
-  rightWall.position.set(w / 2 - 0.13, wallH / 2 + 0.16, 0);
+  // The loft's right wall is a low half wall so the camera can see the desk and bookshelf behind it
+  const rightH = starter ? 1.12 : wallH;
+  const rightWall = new THREE.Mesh(new THREE.BoxGeometry(0.26, rightH, d), wallMat);
+  rightWall.position.set(w / 2 - 0.13, rightH / 2 + 0.16, 0);
   rightWall.castShadow = true;
   rightWall.receiveShadow = true;
   group.add(rightWall);
@@ -3829,8 +3834,13 @@ export function createHouseStructure(house: HouseDef, ownedFurniture: string[]):
     }
   }
 
-  // Starter Bed
+  if (starter) {
+    group.add(createStarterApartment(w, d, wallH).group);
+  }
+
+  // Starter Bed (other homes; the loft has its own)
   const bed = new THREE.Group();
+  bed.visible = !starter;
   bed.position.set(-w / 2 + 1.4, 0.16, -d / 2 + 1.4);
   const frame = new THREE.Mesh(
     new THREE.BoxGeometry(1.7, 0.32, 2.2),
