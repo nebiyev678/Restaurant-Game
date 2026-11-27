@@ -21,6 +21,7 @@ import {
 import type { ClothingItem } from './types';
 import { ChefRig, applyChefOutfit, chefCarryPoint, loadChefRig, triggerChefServe, triggerChefSurprise, updateChefRig } from './glbChef';
 import * as THREE from 'three';
+import { createShopBuilding, placeShopColliders } from './shopBuildings';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { sound } from './audio';
 import { QUALITY_PRESETS, ResolvedQuality } from './mobile';
@@ -1413,11 +1414,9 @@ export class RestaurantWorldEngine {
     ];
 
     shops.forEach((s) => {
-      const building = createShopBuildingMesh(s.name, s.color, s.wall);
-      // Old-town pitched terracotta roof on top of the cornice
-      const roof = createGableRoofMesh(7.3, 5.7, 1.7, s.roof);
-      roof.position.y = 3.46;
-      building.add(roof);
+      // Each shop has its own architecture (boutique, glass showroom, market hall, bank)
+      const { group: building, colliders: propColliders } = createShopBuilding(s.zoneId);
+      this.staticColliders.push(...placeShopColliders(propColliders, s.x, s.z, s.rotY));
       building.position.set(s.x, 0, s.z);
       building.rotation.y = s.rotY;
       this.scene.add(building);

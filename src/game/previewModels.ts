@@ -4,6 +4,7 @@
  * uses, so the picture always matches what appears in the 3D city.
  */
 import * as THREE from 'three';
+import { createShopBuilding } from './shopBuildings';
 import {
   CAFE_THEMES,
   CITY_ZONES,
@@ -261,6 +262,7 @@ export function buildPreviewModel(kind: PreviewKind, id: string): THREE.Object3D
       const zone = CITY_ZONES.find((z) => z.id === id);
       if (id === 'home') return createHouseStructure(HOUSE_CATALOG[0], []);
       if (id === 'restaurant') return createEntranceArchwayMesh('#dc2626', '#7c2d12');
+      if (id === 'clothing' || id === 'dealership' || id === 'supermarket' || id === 'bank') return createShopBuilding(id).group;
       return buildShop(zone?.name ?? 'Shop', zone?.color ?? '#64748b');
     }
   }
