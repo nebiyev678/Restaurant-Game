@@ -290,7 +290,8 @@ export function createStarterApartment(w: number, d: number, wallH: number): Apa
     // w, d, x, z, rotY
     [w - 0.52, 0.03, 0, backZ + 0.015, 0],
     [d - 0.26, 0.03, leftX + 0.015, 0.13, Math.PI / 2],
-    [d - 0.26, 0.03, rightX - 0.015, 0.13, Math.PI / 2],
+    // Faces -X (into the room); with +90° it faced into the wall and its back fought with the wall face
+    [d - 0.26, 0.03, rightX - 0.015, 0.13, -Math.PI / 2],
   ];
   const shell = new THREE.Group();
   for (const [len, , x, z, rot] of walls) {
