@@ -51,6 +51,7 @@ import {
   addAlbumCards,
   createEmptyAlbum,
   CUISINES,
+  CUISINE_ORDER,
   getAlbumPage,
   getAlbumPageReward,
   getMenuRecipes,
@@ -1145,6 +1146,63 @@ export default function App() {
     // Opening gift: three album cards from the new country
     window.setTimeout(() => grantAlbumCards(rollAlbumCards(3, next.id, [], Math.random, { minRarity: 'rare' })), 1200);
   }, [commitSave, showToast, grantAlbumCards]);
+
+  // --- Tester tools (hidden in Settings): jump straight to any restaurant to check its dishes and look ---
+  const handleTesterJumpToCuisine = useCallback(
+    (id: CuisineId) => {
+      const target = CUISINES[id];
+      if (!target) return;
+      const before = CUISINE_ORDER.slice(0, CUISINE_ORDER.indexOf(id));
+      const s = saveRef.current;
+      const unlocked = Array.from(new Set([...s.unlockedRecipes, ...target.menu]));
+      const lines = Array.from(
+        new Set([
+          ...s.unlockedSpecialtyLines,
+          ...target.menu.map((r) => RECIPES[r]?.recipeLine).filter((l): l is SpecialtyLineId => !!l),
+        ])
+      );
+      const menu = getMenuRecipes({ activeCuisine: id, unlockedRecipes: unlocked });
+      const special = pickDailySpecial(s.dayNumber, menu, null);
+      commitSave((prev) => ({
+        ...prev,
+        activeCuisine: id,
+        restaurantLevel: Math.max(prev.restaurantLevel, target.requiredLevel),
+        xp: prev.restaurantLevel >= target.requiredLevel ? prev.xp : 0,
+        ownedRestaurants: before,
+        unlockedRecipes: unlocked,
+        unlockedSpecialtyLines: lines,
+        activeCafeThemeId: 'classic_bistro',
+        dailySpecial: special,
+        quickGoals: {
+          ...prev.quickGoals,
+          current: generateQuickGoal(prev.quickGoals.completed, Math.max(prev.restaurantLevel, target.requiredLevel), menu, special),
+        },
+        dailyChallenges: {
+          ...prev.dailyChallenges,
+          items: prev.dailyChallenges.items.map((c, i) =>
+            c.kind === 'serve_recipe' && c.recipeId && !menu.includes(c.recipeId) && c.progress < c.target
+              ? { ...c, recipeId: menu[i % menu.length], progress: 0 }
+              : c
+          ),
+        },
+      }));
+      engineRef.current?.startNewRestaurant();
+      setDrawerTab('none');
+      sound.playLevelUp();
+      showToast(`🧪 ${target.flag} ${target.name}`, `Tester jump: every dish on this menu is unlocked`);
+    },
+    [commitSave, showToast]
+  );
+  const handleTesterAddMoney = useCallback(() => {
+    commitSave((prev) => ({ ...prev, restaurantCash: prev.restaurantCash + 10000 }));
+    sound.playCash();
+    showToast('🧪 +$10,000', 'Added to restaurant money');
+  }, [commitSave, showToast]);
+  const handleTesterLevelUp = useCallback(() => {
+    commitSave((prev) => ({ ...prev, restaurantLevel: prev.restaurantLevel + 1, xp: 0 }));
+    sound.playLevelUp();
+    showToast('🧪 Level up', `Restaurant Level ${saveRef.current.restaurantLevel + 1}`);
+  }, [commitSave, showToast]);
 
   const claimableChallenges = countClaimableChallenges(save.dailyChallenges);
   const starTarget = getDailyStarTarget(save.restaurantLevel);
@@ -2876,6 +2934,9 @@ export default function App() {
           commitSave((p) => ({ ...p, hapticsEnabled: next }));
         }}
         onResetSave={handleResetCareer}
+        onTesterJumpToCuisine={handleTesterJumpToCuisine}
+        onTesterAddMoney={handleTesterAddMoney}
+        onTesterLevelUp={handleTesterLevelUp}
         onAdvanceTimeOfDay={() =>
           commitSave((p) => ({ ...p, timeOfDay: (p.timeOfDay + 0.25) % 1 }))
         }
